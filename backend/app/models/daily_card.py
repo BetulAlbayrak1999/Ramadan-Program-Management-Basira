@@ -1,39 +1,41 @@
 from datetime import datetime
-from app import db
+from sqlalchemy import Column, Integer, Text, Date, DateTime, ForeignKey, UniqueConstraint
+from sqlalchemy.orm import relationship
+from app.database import Base
 
 
-class DailyCard(db.Model):
+class DailyCard(Base):
     """Daily Ramadan card for tracking daily achievements."""
 
     __tablename__ = "daily_cards"
 
-    id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
-    date = db.Column(db.Date, nullable=False)
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    date = Column(Date, nullable=False)
 
     # Score fields (0-10 each)
-    quran = db.Column(db.Integer, default=0)
-    duas = db.Column(db.Integer, default=0)
-    taraweeh = db.Column(db.Integer, default=0)
-    tahajjud = db.Column(db.Integer, default=0)
-    duha = db.Column(db.Integer, default=0)
-    rawatib = db.Column(db.Integer, default=0)
-    main_lesson = db.Column(db.Integer, default=0)
-    required_lesson = db.Column(db.Integer, default=0)
-    enrichment_lesson = db.Column(db.Integer, default=0)
-    charity_worship = db.Column(db.Integer, default=0)
-    extra_work = db.Column(db.Integer, default=0)
-    extra_work_description = db.Column(db.Text, nullable=True)
+    quran = Column(Integer, default=0)
+    duas = Column(Integer, default=0)
+    taraweeh = Column(Integer, default=0)
+    tahajjud = Column(Integer, default=0)
+    duha = Column(Integer, default=0)
+    rawatib = Column(Integer, default=0)
+    main_lesson = Column(Integer, default=0)
+    required_lesson = Column(Integer, default=0)
+    enrichment_lesson = Column(Integer, default=0)
+    charity_worship = Column(Integer, default=0)
+    extra_work = Column(Integer, default=0)
+    extra_work_description = Column(Text, nullable=True)
 
     # Timestamps
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Relationships
-    user = db.relationship("User", back_populates="daily_cards")
+    user = relationship("User", back_populates="daily_cards")
 
     # Unique constraint: one card per user per day
-    __table_args__ = (db.UniqueConstraint("user_id", "date", name="unique_user_date"),)
+    __table_args__ = (UniqueConstraint("user_id", "date", name="unique_user_date"),)
 
     SCORE_FIELDS = [
         "quran", "duas", "taraweeh", "tahajjud", "duha",
@@ -54,28 +56,3 @@ class DailyCard(db.Model):
         if self.max_score == 0:
             return 0
         return round((self.total_score / self.max_score) * 100, 1)
-
-    def to_dict(self):
-        return {
-            "id": self.id,
-            "user_id": self.user_id,
-            "date": self.date.isoformat(),
-            "quran": self.quran,
-            "duas": self.duas,
-            "taraweeh": self.taraweeh,
-            "tahajjud": self.tahajjud,
-            "duha": self.duha,
-            "rawatib": self.rawatib,
-            "main_lesson": self.main_lesson,
-            "required_lesson": self.required_lesson,
-            "enrichment_lesson": self.enrichment_lesson,
-            "charity_worship": self.charity_worship,
-            "extra_work": self.extra_work,
-            "extra_work_description": self.extra_work_description,
-            "total_score": self.total_score,
-            "max_score": self.max_score,
-            "percentage": self.percentage,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
-        }
-        

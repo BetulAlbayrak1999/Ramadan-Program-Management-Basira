@@ -1,115 +1,117 @@
 from datetime import date, timedelta
-from flask import Blueprint, request, jsonify
-from flask_jwt_extended import jwt_required, get_jwt_identity
-from app import db
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.orm import Session
+from app.database import get_db
 from app.models.user import User
 from app.models.daily_card import DailyCard
 from app.models.halqa import Halqa
-from app.utils.decorators import role_required
+from app.dependencies import RoleChecker
+from app.schemas.user import user_to_response
+from app.schemas.daily_card import card_to_response
+from app.schemas.halqa import halqa_to_response
 
-supervisor_bp = Blueprint("supervisor", __name__)
+router = APIRouter(prefix="/api/supervisor", tags=["supervisor"])
+
+require_supervisor = RoleChecker("supervisor", "super_admin")
 
 
-@supervisor_bp.route("/members", methods=["GET"])
-@jwt_required()
-@role_required("supervisor", "super_admin")
-def get_halqa_members():
+@router.get("/members")
+def get_halqa_members(
+    user: User = Depends(require_supervisor),
+    db: Session = Depends(get_db),
+):
     """Get members in supervisor's halqa."""
-    user_id = get_jwt_identity()
-    user = User.query.get(user_id)
-
-    halqa = Halqa.query.filter_by(supervisor_id=user_id).first()
+    halqa = db.query(Halqa).filter_by(supervisor_id=user.id).first()
     if not halqa:
-        return jsonify({"error": "لا توجد حلقة مسندة إليك"}), 404
+        raise HTTPException(404, detail="لا توجد حلقة مسندة إليك")
 
-    members = User.query.filter_by(halqa_id=halqa.id, status="active").all()
-    return jsonify({
-        "halqa": halqa.to_dict(),
-        "members": [m.to_dict() for m in members],
-    }), 200
+    members = db.query(User).filter_by(halqa_id=halqa.id, status="active").all()
+    return {
+        "halqa": halqa_to_response(halqa),
+        "members": [user_to_response(m) for m in members],
+    }
 
 
-@supervisor_bp.route("/member/<int:member_id>/cards", methods=["GET"])
-@jwt_required()
-@role_required("supervisor", "super_admin")
-def get_member_cards(member_id):
+@router.get("/member/{member_id}/cards")
+def get_member_cards(
+    member_id: int,
+    user: User = Depends(require_supervisor),
+    db: Session = Depends(get_db),
+):
     """Get all cards for a specific member in halqa."""
-    user_id = get_jwt_identity()
-
-    # Verify supervisor owns the halqa
-    halqa = Halqa.query.filter_by(supervisor_id=user_id).first()
+    halqa = db.query(Halqa).filter_by(supervisor_id=user.id).first()
     if not halqa:
-        return jsonify({"error": "لا توجد حلقة مسندة إليك"}), 404
+        raise HTTPException(404, detail="لا توجد حلقة مسندة إليك")
 
-    member = User.query.get(member_id)
+    member = db.get(User, member_id)
     if not member or member.halqa_id != halqa.id:
-        return jsonify({"error": "المشارك ليس في حلقتك"}), 403
+        raise HTTPException(403, detail="المشارك ليس في حلقتك")
 
-    cards = DailyCard.query.filter_by(user_id=member_id).order_by(DailyCard.date.desc()).all()
-    return jsonify({
-        "member": member.to_dict(),
-        "cards": [c.to_dict() for c in cards],
-    }), 200
+    cards = db.query(DailyCard).filter_by(user_id=member_id).order_by(DailyCard.date.desc()).all()
+    return {
+        "member": user_to_response(member),
+        "cards": [card_to_response(c) for c in cards],
+    }
 
 
-@supervisor_bp.route("/daily-summary", methods=["GET"])
-@jwt_required()
-@role_required("supervisor", "super_admin")
-def get_daily_summary():
+@router.get("/daily-summary")
+def get_daily_summary(
+    user: User = Depends(require_supervisor),
+    db: Session = Depends(get_db),
+    date_param: str = Query(None, alias="date"),
+):
     """Get daily submission summary for the halqa."""
-    user_id = get_jwt_identity()
-    target_date_str = request.args.get("date", date.today().isoformat())
+    target_date_str = date_param or date.today().isoformat()
     target_date = date.fromisoformat(target_date_str)
 
-    halqa = Halqa.query.filter_by(supervisor_id=user_id).first()
+    halqa = db.query(Halqa).filter_by(supervisor_id=user.id).first()
     if not halqa:
-        return jsonify({"error": "لا توجد حلقة مسندة إليك"}), 404
+        raise HTTPException(404, detail="لا توجد حلقة مسندة إليك")
 
-    members = User.query.filter_by(halqa_id=halqa.id, status="active").all()
+    members = db.query(User).filter_by(halqa_id=halqa.id, status="active").all()
 
     submitted = []
     not_submitted = []
 
     for member in members:
-        card = DailyCard.query.filter_by(user_id=member.id, date=target_date).first()
+        card = db.query(DailyCard).filter_by(user_id=member.id, date=target_date).first()
         if card:
             submitted.append({
-                "member": member.to_dict(),
-                "card": card.to_dict(),
+                "member": user_to_response(member),
+                "card": card_to_response(card),
             })
         else:
-            not_submitted.append(member.to_dict())
+            not_submitted.append(user_to_response(member))
 
-    return jsonify({
+    return {
         "date": target_date.isoformat(),
-        "halqa": halqa.to_dict(),
+        "halqa": halqa_to_response(halqa),
         "submitted": submitted,
         "not_submitted": not_submitted,
         "submitted_count": len(submitted),
         "not_submitted_count": len(not_submitted),
         "total_members": len(members),
-    }), 200
+    }
 
 
-@supervisor_bp.route("/weekly-summary", methods=["GET"])
-@jwt_required()
-@role_required("supervisor", "super_admin")
-def get_weekly_summary():
+@router.get("/weekly-summary")
+def get_weekly_summary(
+    user: User = Depends(require_supervisor),
+    db: Session = Depends(get_db),
+):
     """Get weekly summary for the halqa."""
-    user_id = get_jwt_identity()
-
-    halqa = Halqa.query.filter_by(supervisor_id=user_id).first()
+    halqa = db.query(Halqa).filter_by(supervisor_id=user.id).first()
     if not halqa:
-        return jsonify({"error": "لا توجد حلقة مسندة إليك"}), 404
+        raise HTTPException(404, detail="لا توجد حلقة مسندة إليك")
 
     today = date.today()
     week_start = today - timedelta(days=today.weekday())
 
-    members = User.query.filter_by(halqa_id=halqa.id, status="active").all()
+    members = db.query(User).filter_by(halqa_id=halqa.id, status="active").all()
     summary = []
 
     for member in members:
-        cards = DailyCard.query.filter(
+        cards = db.query(DailyCard).filter(
             DailyCard.user_id == member.id,
             DailyCard.date >= week_start,
             DailyCard.date <= today,
@@ -120,7 +122,7 @@ def get_weekly_summary():
         pct = round((total / max_total) * 100, 1) if max_total > 0 else 0
 
         summary.append({
-            "member": member.to_dict(),
+            "member": user_to_response(member),
             "cards_submitted": len(cards),
             "total_score": total,
             "percentage": pct,
@@ -128,10 +130,9 @@ def get_weekly_summary():
 
     summary.sort(key=lambda x: x["total_score"], reverse=True)
 
-    return jsonify({
-        "halqa": halqa.to_dict(),
+    return {
+        "halqa": halqa_to_response(halqa),
         "week_start": week_start.isoformat(),
         "week_end": today.isoformat(),
         "summary": summary,
-    }), 200
-    
+    }

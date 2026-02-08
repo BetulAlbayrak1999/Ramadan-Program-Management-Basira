@@ -1,17 +1,11 @@
-from app import db
+from sqlalchemy import Column, Integer, Boolean
+from app.database import Base
 
 
-class SiteSettings(db.Model):
+class SiteSettings(Base):
     """Global site settings."""
 
     __tablename__ = "site_settings"
 
-    id = db.Column(db.Integer, primary_key=True)
-    enable_email_notifications = db.Column(db.Boolean, default=True)
-
-    def to_dict(self):
-        return {
-            "id": self.id,
-            "enable_email_notifications": self.enable_email_notifications,
-        }
-        
+    id = Column(Integer, primary_key=True)
+    enable_email_notifications = Column(Boolean, default=True)

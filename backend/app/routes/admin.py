@@ -1,320 +1,351 @@
 import io
-from datetime import date, timedelta, datetime
-from flask import Blueprint, request, jsonify, send_file, current_app
-from flask_jwt_extended import jwt_required, get_jwt_identity
-from app import db
+from datetime import date, timedelta
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi.responses import StreamingResponse, Response
+from sqlalchemy import or_
+from sqlalchemy.orm import Session
+from app.database import get_db
+from app.config import settings as app_settings
 from app.models.user import User
 from app.models.daily_card import DailyCard
 from app.models.halqa import Halqa
-from app.utils.decorators import role_required
+from app.dependencies import RoleChecker
+from app.schemas.user import (
+    AdminUserUpdate, AdminResetPassword, SetRole,
+    AssignHalqa, RejectRegistration, user_to_response,
+)
+from app.schemas.halqa import HalqaCreate, HalqaUpdate, AssignMembers, halqa_to_response
 
-admin_bp = Blueprint("admin", __name__)
+router = APIRouter(prefix="/api/admin", tags=["admin"])
+
+require_admin = RoleChecker("super_admin")
 
 
 # ─── User Management ──────────────────────────────────────────────────────────
 
 
-@admin_bp.route("/registrations", methods=["GET"])
-@jwt_required()
-@role_required("super_admin")
-def get_registrations():
+@router.get("/registrations")
+def get_registrations(
+    status: str = Query("pending"),
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     """Get all pending registrations."""
-    status_filter = request.args.get("status", "pending")
-    if status_filter == "all":
-        users = User.query.order_by(User.created_at.desc()).all()
+    if status == "all":
+        users = db.query(User).order_by(User.created_at.desc()).all()
     else:
-        users = User.query.filter_by(status=status_filter).order_by(User.created_at.desc()).all()
-    return jsonify({"users": [u.to_dict() for u in users]}), 200
+        users = db.query(User).filter_by(status=status).order_by(User.created_at.desc()).all()
+    return {"users": [user_to_response(u) for u in users]}
 
 
-@admin_bp.route("/registration/<int:user_id>/approve", methods=["POST"])
-@jwt_required()
-@role_required("super_admin")
-def approve_registration(user_id):
+@router.post("/registration/{user_id}/approve")
+def approve_registration(
+    user_id: int,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     """Approve a registration request."""
-    user = User.query.get(user_id)
+    user = db.get(User, user_id)
     if not user:
-        return jsonify({"error": "المستخدم غير موجود"}), 404
+        raise HTTPException(404, detail="المستخدم غير موجود")
 
     user.status = "active"
     user.rejection_note = None
-    db.session.commit()
-    return jsonify({"message": "تم قبول الطلب", "user": user.to_dict()}), 200
+    db.commit()
+    db.refresh(user)
+    return {"message": "تم قبول الطلب", "user": user_to_response(user)}
 
 
-@admin_bp.route("/registration/<int:user_id>/reject", methods=["POST"])
-@jwt_required()
-@role_required("super_admin")
-def reject_registration(user_id):
+@router.post("/registration/{user_id}/reject")
+def reject_registration(
+    user_id: int,
+    data: RejectRegistration = None,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     """Reject a registration request."""
-    user = User.query.get(user_id)
+    user = db.get(User, user_id)
     if not user:
-        return jsonify({"error": "المستخدم غير موجود"}), 404
+        raise HTTPException(404, detail="المستخدم غير موجود")
 
-    data = request.get_json() or {}
     user.status = "rejected"
-    user.rejection_note = data.get("note", "")
-    db.session.commit()
-    return jsonify({"message": "تم رفض الطلب", "user": user.to_dict()}), 200
+    user.rejection_note = data.note if data else ""
+    db.commit()
+    db.refresh(user)
+    return {"message": "تم رفض الطلب", "user": user_to_response(user)}
 
 
-@admin_bp.route("/users", methods=["GET"])
-@jwt_required()
-@role_required("super_admin")
-def get_all_users():
+@router.get("/users")
+def get_all_users(
+    status: str = Query(None),
+    gender: str = Query(None),
+    halqa_id: int = Query(None),
+    search: str = Query(""),
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     """Get all users with optional filters."""
-    status = request.args.get("status")
-    gender = request.args.get("gender")
-    halqa_id = request.args.get("halqa_id")
-    search = request.args.get("search", "")
-
-    query = User.query
+    query = db.query(User)
 
     if status:
         query = query.filter_by(status=status)
     if gender:
         query = query.filter_by(gender=gender)
     if halqa_id:
-        query = query.filter_by(halqa_id=int(halqa_id))
+        query = query.filter_by(halqa_id=halqa_id)
     if search:
         query = query.filter(
-            db.or_(
+            or_(
                 User.full_name.ilike(f"%{search}%"),
                 User.email.ilike(f"%{search}%"),
             )
         )
 
     users = query.order_by(User.created_at.desc()).all()
-    return jsonify({"users": [u.to_dict() for u in users]}), 200
+    return {"users": [user_to_response(u) for u in users]}
 
 
-@admin_bp.route("/user/<int:user_id>", methods=["GET"])
-@jwt_required()
-@role_required("super_admin")
-def get_user(user_id):
+@router.get("/user/{user_id}")
+def get_user(
+    user_id: int,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     """Get user details."""
-    user = User.query.get(user_id)
+    user = db.get(User, user_id)
     if not user:
-        return jsonify({"error": "المستخدم غير موجود"}), 404
-    return jsonify({"user": user.to_dict()}), 200
+        raise HTTPException(404, detail="المستخدم غير موجود")
+    return {"user": user_to_response(user)}
 
 
-@admin_bp.route("/user/<int:user_id>", methods=["PUT"])
-@jwt_required()
-@role_required("super_admin")
-def update_user(user_id):
+@router.put("/user/{user_id}")
+def update_user(
+    user_id: int,
+    data: AdminUserUpdate,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     """Update user details."""
-    user = User.query.get(user_id)
+    user = db.get(User, user_id)
     if not user:
-        return jsonify({"error": "المستخدم غير موجود"}), 404
+        raise HTTPException(404, detail="المستخدم غير موجود")
 
-    data = request.get_json()
     allowed = ["full_name", "gender", "age", "phone", "country", "referral_source", "status", "halqa_id"]
     for field in allowed:
-        if field in data:
-            setattr(user, field, data[field])
+        value = getattr(data, field, None)
+        if value is not None:
+            setattr(user, field, value)
 
-    db.session.commit()
-    return jsonify({"message": "تم تحديث البيانات", "user": user.to_dict()}), 200
+    db.commit()
+    db.refresh(user)
+    return {"message": "تم تحديث البيانات", "user": user_to_response(user)}
 
 
-@admin_bp.route("/user/<int:user_id>/reset-password", methods=["POST"])
-@jwt_required()
-@role_required("super_admin")
-def admin_reset_password(user_id):
+@router.post("/user/{user_id}/reset-password")
+def admin_reset_password(
+    user_id: int,
+    data: AdminResetPassword,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     """Reset user password by admin."""
-    user = User.query.get(user_id)
+    user = db.get(User, user_id)
     if not user:
-        return jsonify({"error": "المستخدم غير موجود"}), 404
+        raise HTTPException(404, detail="المستخدم غير موجود")
 
-    data = request.get_json()
-    new_password = data.get("new_password", "")
-    if len(new_password) < 6:
-        return jsonify({"error": "كلمة المرور يجب أن تكون 6 أحرف على الأقل"}), 400
-
-    user.set_password(new_password)
-    db.session.commit()
-    return jsonify({"message": "تم إعادة تعيين كلمة المرور"}), 200
+    user.set_password(data.new_password)
+    db.commit()
+    return {"message": "تم إعادة تعيين كلمة المرور"}
 
 
-@admin_bp.route("/user/<int:user_id>/withdraw", methods=["POST"])
-@jwt_required()
-@role_required("super_admin")
-def withdraw_user(user_id):
+@router.post("/user/{user_id}/withdraw")
+def withdraw_user(
+    user_id: int,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     """Mark user as withdrawn."""
-    user = User.query.get(user_id)
+    user = db.get(User, user_id)
     if not user:
-        return jsonify({"error": "المستخدم غير موجود"}), 404
+        raise HTTPException(404, detail="المستخدم غير موجود")
 
     user.status = "withdrawn"
-    db.session.commit()
-    return jsonify({"message": "تم سحب المشارك", "user": user.to_dict()}), 200
+    db.commit()
+    db.refresh(user)
+    return {"message": "تم سحب المشارك", "user": user_to_response(user)}
 
 
-@admin_bp.route("/user/<int:user_id>/activate", methods=["POST"])
-@jwt_required()
-@role_required("super_admin")
-def activate_user(user_id):
+@router.post("/user/{user_id}/activate")
+def activate_user(
+    user_id: int,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     """Re-activate user."""
-    user = User.query.get(user_id)
+    user = db.get(User, user_id)
     if not user:
-        return jsonify({"error": "المستخدم غير موجود"}), 404
+        raise HTTPException(404, detail="المستخدم غير موجود")
 
     user.status = "active"
-    db.session.commit()
-    return jsonify({"message": "تم تفعيل المشارك", "user": user.to_dict()}), 200
+    db.commit()
+    db.refresh(user)
+    return {"message": "تم تفعيل المشارك", "user": user_to_response(user)}
 
 
 # ─── Role Management ──────────────────────────────────────────────────────────
 
 
-@admin_bp.route("/user/<int:user_id>/set-role", methods=["POST"])
-@jwt_required()
-@role_required("super_admin")
-def set_user_role(user_id):
+@router.post("/user/{user_id}/set-role")
+def set_user_role(
+    user_id: int,
+    data: SetRole,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     """Set user role (supervisor, super_admin, participant)."""
-    admin_id = get_jwt_identity()
-    admin = User.query.get(admin_id)
-    target = User.query.get(user_id)
-
+    target = db.get(User, user_id)
     if not target:
-        return jsonify({"error": "المستخدم غير موجود"}), 404
+        raise HTTPException(404, detail="المستخدم غير موجود")
 
-    data = request.get_json()
-    new_role = data.get("role")
-
-    if new_role not in ["participant", "supervisor", "super_admin"]:
-        return jsonify({"error": "الصلاحية غير صالحة"}), 400
+    if data.role not in ["participant", "supervisor", "super_admin"]:
+        raise HTTPException(400, detail="الصلاحية غير صالحة")
 
     # Only primary admin can manage super_admin roles
-    primary_email = current_app.config.get("SUPER_ADMIN_EMAIL", "").lower()
-    if new_role == "super_admin" or target.role == "super_admin":
+    primary_email = app_settings.SUPER_ADMIN_EMAIL.lower()
+    if data.role == "super_admin" or target.role == "super_admin":
         if admin.email != primary_email:
-            return jsonify({"error": "فقط المشرف الرئيسي يمكنه إدارة صلاحيات السوبر آدمن"}), 403
+            raise HTTPException(403, detail="فقط المشرف الرئيسي يمكنه إدارة صلاحيات السوبر آدمن")
 
-    target.role = new_role
-    db.session.commit()
-    return jsonify({"message": "تم تحديث الصلاحية", "user": target.to_dict()}), 200
+    target.role = data.role
+    db.commit()
+    db.refresh(target)
+    return {"message": "تم تحديث الصلاحية", "user": user_to_response(target)}
 
 
 # ─── Halqa Management ─────────────────────────────────────────────────────────
 
 
-@admin_bp.route("/halqas", methods=["GET"])
-@jwt_required()
-@role_required("super_admin")
-def get_halqas():
+@router.get("/halqas")
+def get_halqas(
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     """Get all halqas."""
-    halqas = Halqa.query.all()
-    return jsonify({"halqas": [h.to_dict() for h in halqas]}), 200
+    halqas = db.query(Halqa).all()
+    return {"halqas": [halqa_to_response(h) for h in halqas]}
 
 
-@admin_bp.route("/halqa", methods=["POST"])
-@jwt_required()
-@role_required("super_admin")
-def create_halqa():
+@router.post("/halqa")
+def create_halqa(
+    data: HalqaCreate,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     """Create a new halqa."""
-    data = request.get_json()
-    name = data.get("name", "").strip()
-
+    name = data.name.strip()
     if not name:
-        return jsonify({"error": "اسم الحلقة مطلوب"}), 400
+        raise HTTPException(400, detail="اسم الحلقة مطلوب")
 
-    if Halqa.query.filter_by(name=name).first():
-        return jsonify({"error": "اسم الحلقة موجود مسبقاً"}), 400
+    if db.query(Halqa).filter_by(name=name).first():
+        raise HTTPException(400, detail="اسم الحلقة موجود مسبقاً")
 
-    halqa = Halqa(name=name, supervisor_id=data.get("supervisor_id"))
-    db.session.add(halqa)
-    db.session.commit()
-    return jsonify({"message": "تم إنشاء الحلقة", "halqa": halqa.to_dict()}), 201
+    halqa = Halqa(name=name, supervisor_id=data.supervisor_id)
+    db.add(halqa)
+    db.commit()
+    db.refresh(halqa)
+    return {"message": "تم إنشاء الحلقة", "halqa": halqa_to_response(halqa)}
 
 
-@admin_bp.route("/halqa/<int:halqa_id>", methods=["PUT"])
-@jwt_required()
-@role_required("super_admin")
-def update_halqa(halqa_id):
+@router.put("/halqa/{halqa_id}")
+def update_halqa(
+    halqa_id: int,
+    data: HalqaUpdate,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     """Update halqa details."""
-    halqa = Halqa.query.get(halqa_id)
+    halqa = db.get(Halqa, halqa_id)
     if not halqa:
-        return jsonify({"error": "الحلقة غير موجودة"}), 404
+        raise HTTPException(404, detail="الحلقة غير موجودة")
 
-    data = request.get_json()
-    if "name" in data:
-        halqa.name = data["name"]
-    if "supervisor_id" in data:
-        halqa.supervisor_id = data["supervisor_id"]
+    if data.name is not None:
+        halqa.name = data.name
+    if data.supervisor_id is not None:
+        halqa.supervisor_id = data.supervisor_id
 
-    db.session.commit()
-    return jsonify({"message": "تم تحديث الحلقة", "halqa": halqa.to_dict()}), 200
+    db.commit()
+    db.refresh(halqa)
+    return {"message": "تم تحديث الحلقة", "halqa": halqa_to_response(halqa)}
 
 
-@admin_bp.route("/halqa/<int:halqa_id>/assign-members", methods=["POST"])
-@jwt_required()
-@role_required("super_admin")
-def assign_members_to_halqa(halqa_id):
+@router.post("/halqa/{halqa_id}/assign-members")
+def assign_members_to_halqa(
+    halqa_id: int,
+    data: AssignMembers,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     """Assign members to a halqa."""
-    halqa = Halqa.query.get(halqa_id)
+    halqa = db.get(Halqa, halqa_id)
     if not halqa:
-        return jsonify({"error": "الحلقة غير موجودة"}), 404
+        raise HTTPException(404, detail="الحلقة غير موجودة")
 
-    data = request.get_json()
-    user_ids = data.get("user_ids", [])
-
-    for uid in user_ids:
-        user = User.query.get(uid)
+    for uid in data.user_ids:
+        user = db.get(User, uid)
         if user:
             user.halqa_id = halqa_id
 
-    db.session.commit()
-    return jsonify({"message": "تم تعيين المشاركين"}), 200
+    db.commit()
+    return {"message": "تم تعيين المشاركين"}
 
 
-@admin_bp.route("/user/<int:user_id>/assign-halqa", methods=["POST"])
-@jwt_required()
-@role_required("super_admin")
-def assign_user_halqa(user_id):
+@router.post("/user/{user_id}/assign-halqa")
+def assign_user_halqa(
+    user_id: int,
+    data: AssignHalqa,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     """Assign a single user to a halqa."""
-    user = User.query.get(user_id)
+    user = db.get(User, user_id)
     if not user:
-        return jsonify({"error": "المستخدم غير موجود"}), 404
+        raise HTTPException(404, detail="المستخدم غير موجود")
 
-    data = request.get_json()
-    user.halqa_id = data.get("halqa_id")
-    db.session.commit()
-    return jsonify({"message": "تم تعيين الحلقة", "user": user.to_dict()}), 200
+    user.halqa_id = data.halqa_id
+    db.commit()
+    db.refresh(user)
+    return {"message": "تم تعيين الحلقة", "user": user_to_response(user)}
 
 
 # ─── Analytics Dashboard ──────────────────────────────────────────────────────
 
 
-@admin_bp.route("/analytics", methods=["GET"])
-@jwt_required()
-@role_required("super_admin")
-def get_analytics():
+@router.get("/analytics")
+def get_analytics(
+    gender: str = Query(None),
+    halqa_id: int = Query(None),
+    supervisor: str = Query(None),
+    member: str = Query(None),
+    min_pct: float = Query(None),
+    max_pct: float = Query(None),
+    period: str = Query("all"),
+    sort_by: str = Query("score"),
+    sort_order: str = Query("desc"),
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     """Get comprehensive analytics."""
-    # Filters
-    gender = request.args.get("gender")
-    halqa_id = request.args.get("halqa_id")
-    supervisor_name = request.args.get("supervisor")
-    member_name = request.args.get("member")
-    min_pct = request.args.get("min_pct", type=float)
-    max_pct = request.args.get("max_pct", type=float)
-    period = request.args.get("period", "all")  # weekly, monthly, all
-    sort_by = request.args.get("sort_by", "score")  # score, name
-    sort_order = request.args.get("sort_order", "desc")
-
-    # Base query for active users
-    query = User.query.filter_by(status="active")
+    query = db.query(User).filter_by(status="active")
 
     if gender:
         query = query.filter_by(gender=gender)
     if halqa_id:
-        query = query.filter_by(halqa_id=int(halqa_id))
-    if member_name:
-        query = query.filter(User.full_name.ilike(f"%{member_name}%"))
-    if supervisor_name:
-        halqas = Halqa.query.join(User, Halqa.supervisor_id == User.id).filter(
-            User.full_name.ilike(f"%{supervisor_name}%")
+        query = query.filter_by(halqa_id=halqa_id)
+    if member:
+        query = query.filter(User.full_name.ilike(f"%{member}%"))
+    if supervisor:
+        halqas = db.query(Halqa).join(User, Halqa.supervisor_id == User.id).filter(
+            User.full_name.ilike(f"%{supervisor}%")
         ).all()
         halqa_ids = [h.id for h in halqas]
         if halqa_ids:
@@ -333,7 +364,7 @@ def get_analytics():
 
     results = []
     for u in users:
-        card_query = DailyCard.query.filter_by(user_id=u.id)
+        card_query = db.query(DailyCard).filter_by(user_id=u.id)
         if start_date:
             card_query = card_query.filter(DailyCard.date >= start_date)
 
@@ -371,11 +402,11 @@ def get_analytics():
         r["rank"] = i + 1
 
     # Summary stats
-    total_active = User.query.filter_by(status="active").count()
-    total_pending = User.query.filter_by(status="pending").count()
-    total_halqas = Halqa.query.count()
+    total_active = db.query(User).filter_by(status="active").count()
+    total_pending = db.query(User).filter_by(status="pending").count()
+    total_halqas = db.query(Halqa).count()
 
-    return jsonify({
+    return {
         "results": results,
         "summary": {
             "total_active": total_active,
@@ -383,32 +414,30 @@ def get_analytics():
             "total_halqas": total_halqas,
             "filtered_count": len(results),
         },
-    }), 200
+    }
 
 
 # ─── Import / Export ──────────────────────────────────────────────────────────
 
 
-@admin_bp.route("/export", methods=["GET"])
-@jwt_required()
-@role_required("super_admin")
-def export_data():
+@router.get("/export")
+def export_data(
+    format: str = Query("csv"),
+    gender: str = Query(None),
+    halqa_id: int = Query(None),
+    period: str = Query("all"),
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     """Export analytics data as CSV or XLSX."""
     import csv
     from openpyxl import Workbook
 
-    format_type = request.args.get("format", "csv")
-
-    # Get filtered data (reuse analytics logic)
-    gender = request.args.get("gender")
-    halqa_id = request.args.get("halqa_id")
-    period = request.args.get("period", "all")
-
-    query = User.query.filter_by(status="active")
+    query = db.query(User).filter_by(status="active")
     if gender:
         query = query.filter_by(gender=gender)
     if halqa_id:
-        query = query.filter_by(halqa_id=int(halqa_id))
+        query = query.filter_by(halqa_id=halqa_id)
 
     users = query.all()
     today = date.today()
@@ -421,7 +450,7 @@ def export_data():
 
     rows = []
     for u in users:
-        card_query = DailyCard.query.filter_by(user_id=u.id)
+        card_query = db.query(DailyCard).filter_by(user_id=u.id)
         if start_date:
             card_query = card_query.filter(DailyCard.date >= start_date)
         cards = card_query.all()
@@ -442,7 +471,7 @@ def export_data():
 
     rows.sort(key=lambda x: x["مجموع النقاط"], reverse=True)
 
-    if format_type == "xlsx":
+    if format == "xlsx":
         wb = Workbook()
         ws = wb.active
         ws.title = "النتائج"
@@ -456,11 +485,10 @@ def export_data():
         output = io.BytesIO()
         wb.save(output)
         output.seek(0)
-        return send_file(
+        return StreamingResponse(
             output,
-            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            as_attachment=True,
-            download_name="ramadan_results.xlsx",
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": "attachment; filename=ramadan_results.xlsx"},
         )
     else:
         output = io.StringIO()
@@ -469,24 +497,23 @@ def export_data():
             writer.writeheader()
             writer.writerows(rows)
 
-        return output.getvalue(), 200, {
-            "Content-Type": "text/csv; charset=utf-8",
-            "Content-Disposition": "attachment; filename=ramadan_results.csv",
-        }
+        return Response(
+            content=output.getvalue(),
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": "attachment; filename=ramadan_results.csv"},
+        )
 
 
-@admin_bp.route("/import", methods=["POST"])
-@jwt_required()
-@role_required("super_admin")
-def import_users():
+@router.post("/import")
+def import_users(
+    file: UploadFile = File(...),
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     """Import users from Excel file."""
     from openpyxl import load_workbook
 
-    if "file" not in request.files:
-        return jsonify({"error": "لم يتم رفع ملف"}), 400
-
-    file = request.files["file"]
-    wb = load_workbook(file)
+    wb = load_workbook(file.file)
     ws = wb.active
 
     headers = [cell.value for cell in ws[1]]
@@ -494,7 +521,7 @@ def import_users():
 
     for h in required_headers:
         if h not in headers:
-            return jsonify({"error": f"العمود {h} مفقود من الملف"}), 400
+            raise HTTPException(400, detail=f"العمود {h} مفقود من الملف")
 
     imported = 0
     errors = []
@@ -503,7 +530,7 @@ def import_users():
         row_data = dict(zip(headers, row))
         try:
             email = str(row_data.get("البريد", "")).lower().strip()
-            if not email or User.query.filter_by(email=email).first():
+            if not email or db.query(User).filter_by(email=email).first():
                 errors.append(f"صف {row_idx}: بريد مكرر أو فارغ")
                 continue
 
@@ -519,22 +546,22 @@ def import_users():
                 role="participant",
             )
             user.set_password("123456")  # Default password
-            db.session.add(user)
+            db.add(user)
             imported += 1
         except Exception as e:
             errors.append(f"صف {row_idx}: {str(e)}")
 
-    db.session.commit()
-    return jsonify({
+    db.commit()
+    return {
         "message": f"تم استيراد {imported} مشارك",
         "errors": errors,
-    }), 200
+    }
 
 
-@admin_bp.route("/import-template", methods=["GET"])
-@jwt_required()
-@role_required("super_admin")
-def get_import_template():
+@router.get("/import-template")
+def get_import_template(
+    admin: User = Depends(require_admin),
+):
     """Download import template."""
     from openpyxl import Workbook
 
@@ -552,10 +579,8 @@ def get_import_template():
     output = io.BytesIO()
     wb.save(output)
     output.seek(0)
-    return send_file(
+    return StreamingResponse(
         output,
-        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        as_attachment=True,
-        download_name="import_template.xlsx",
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=import_template.xlsx"},
     )
-    

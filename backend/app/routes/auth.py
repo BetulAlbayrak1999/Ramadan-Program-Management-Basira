@@ -1,191 +1,165 @@
 import random
 import string
-from flask import Blueprint, request, jsonify, current_app
-from flask_jwt_extended import (
-    create_access_token,
-    jwt_required,
-    get_jwt_identity,
-)
-from app import db
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from app.database import get_db
+from app.config import settings as app_settings
 from app.models.user import User
+from app.models.site_settings import SiteSettings
+from app.dependencies import get_current_user, create_access_token
+from app.schemas.user import (
+    UserRegister, UserLogin, UserProfileUpdate,
+    ChangePassword, ForgotPassword, ResetPassword, user_to_response,
+)
 from app.utils.email import send_new_registration_email, send_password_reset_email
 
-auth_bp = Blueprint("auth", __name__)
+router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 # In-memory store for reset tokens (use Redis in production)
 reset_tokens = {}
 
 
-@auth_bp.route("/register", methods=["POST"])
-def register():
+@router.post("/register")
+def register(data: UserRegister, db: Session = Depends(get_db)):
     """Register a new participant."""
-    data = request.get_json()
+    if data.password != data.confirm_password:
+        raise HTTPException(400, detail="كلمتا المرور غير متطابقتين")
 
-    # Validation
-    required = ["full_name", "gender", "age", "phone", "email", "password", "confirm_password", "country"]
-    for field in required:
-        if not data.get(field):
-            return jsonify({"error": f"الحقل {field} مطلوب"}), 400
-
-    if data["password"] != data["confirm_password"]:
-        return jsonify({"error": "كلمتا المرور غير متطابقتين"}), 400
-
-    if len(data["password"]) < 6:
-        return jsonify({"error": "كلمة المرور يجب أن تكون 6 أحرف على الأقل"}), 400
-
-    if User.query.filter_by(email=data["email"].lower().strip()).first():
-        return jsonify({"error": "البريد الإلكتروني مسجل مسبقاً"}), 400
+    existing = db.query(User).filter_by(email=data.email.lower().strip()).first()
+    if existing:
+        raise HTTPException(400, detail="البريد الإلكتروني مسجل مسبقاً")
 
     user = User(
-        full_name=data["full_name"].strip(),
-        gender=data["gender"],
-        age=int(data["age"]),
-        phone=data["phone"].strip(),
-        email=data["email"].lower().strip(),
-        country=data["country"].strip(),
-        referral_source=data.get("referral_source", "").strip(),
+        full_name=data.full_name.strip(),
+        gender=data.gender,
+        age=data.age,
+        phone=data.phone.strip(),
+        email=data.email.lower().strip(),
+        country=data.country.strip(),
+        referral_source=data.referral_source.strip() if data.referral_source else "",
         status="pending",
         role="participant",
     )
-    user.set_password(data["password"])
+    user.set_password(data.password)
 
-    db.session.add(user)
-    db.session.commit()
+    db.add(user)
+    db.commit()
+    db.refresh(user)
 
     # Send notification email
     try:
-        send_new_registration_email(user.to_dict())
+        site = db.query(SiteSettings).first()
+        if site and site.enable_email_notifications:
+            send_new_registration_email(user_to_response(user))
     except Exception:
         pass
 
-    return jsonify({"message": "تم إرسال طلب التسجيل بنجاح. يرجى انتظار الموافقة."}), 201
+    return {"message": "تم إرسال طلب التسجيل بنجاح. يرجى انتظار الموافقة."}
 
 
-@auth_bp.route("/login", methods=["POST"])
-def login():
+@router.post("/login")
+def login(data: UserLogin, db: Session = Depends(get_db)):
     """Login with email and password."""
-    data = request.get_json()
-    email = data.get("email", "").lower().strip()
-    password = data.get("password", "")
+    email = data.email.lower().strip()
+    user = db.query(User).filter_by(email=email).first()
 
-    user = User.query.filter_by(email=email).first()
-
-    if not user or not user.check_password(password):
-        return jsonify({"error": "بيانات الدخول غير صحيحة"}), 401
+    if not user or not user.check_password(data.password):
+        raise HTTPException(401, detail="بيانات الدخول غير صحيحة")
 
     if user.status == "pending":
-        return jsonify({"error": "طلبك قيد المراجعة. يرجى انتظار الموافقة."}), 403
+        raise HTTPException(403, detail="طلبك قيد المراجعة. يرجى انتظار الموافقة.")
 
     if user.status == "rejected":
         note = user.rejection_note or ""
-        return jsonify({"error": f"تم رفض طلبك. {note}"}), 403
+        raise HTTPException(403, detail=f"تم رفض طلبك. {note}")
 
     if user.status == "withdrawn":
-        return jsonify({"error": "حسابك منسحب. تواصل مع الإدارة."}), 403
+        raise HTTPException(403, detail="حسابك منسحب. تواصل مع الإدارة.")
 
     # Check if user is primary super admin
-    is_primary_admin = email == current_app.config.get("SUPER_ADMIN_EMAIL", "").lower()
+    is_primary_admin = email == app_settings.SUPER_ADMIN_EMAIL.lower()
     if is_primary_admin and user.role != "super_admin":
         user.role = "super_admin"
         user.status = "active"
-        db.session.commit()
+        db.commit()
 
-    token = create_access_token(identity=user.id)
-    return jsonify({
-        "token": token,
-        "user": user.to_dict(),
-    }), 200
+    token = create_access_token(user.id)
+    return {"token": token, "user": user_to_response(user)}
 
 
-@auth_bp.route("/me", methods=["GET"])
-@jwt_required()
-def get_current_user():
+@router.get("/me")
+def get_me(user: User = Depends(get_current_user)):
     """Get current user profile."""
-    user_id = get_jwt_identity()
-    user = User.query.get(user_id)
-    if not user:
-        return jsonify({"error": "المستخدم غير موجود"}), 404
-    return jsonify(user.to_dict()), 200
+    return user_to_response(user)
 
 
-@auth_bp.route("/profile", methods=["PUT"])
-@jwt_required()
-def update_profile():
+@router.put("/profile")
+def update_profile(
+    data: UserProfileUpdate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """Update current user profile."""
-    user_id = get_jwt_identity()
-    user = User.query.get(user_id)
-    data = request.get_json()
-
     allowed_fields = ["full_name", "phone", "country", "age"]
     for field in allowed_fields:
-        if field in data:
-            setattr(user, field, data[field])
+        value = getattr(data, field, None)
+        if value is not None:
+            setattr(user, field, value)
 
-    db.session.commit()
-    return jsonify({"message": "تم تحديث الملف الشخصي", "user": user.to_dict()}), 200
+    db.commit()
+    db.refresh(user)
+    return {"message": "تم تحديث الملف الشخصي", "user": user_to_response(user)}
 
 
-@auth_bp.route("/change-password", methods=["POST"])
-@jwt_required()
-def change_password():
+@router.post("/change-password")
+def change_password(
+    data: ChangePassword,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """Change password from within account."""
-    user_id = get_jwt_identity()
-    user = User.query.get(user_id)
-    data = request.get_json()
+    if not user.check_password(data.current_password):
+        raise HTTPException(400, detail="كلمة المرور الحالية غير صحيحة")
 
-    if not user.check_password(data.get("current_password", "")):
-        return jsonify({"error": "كلمة المرور الحالية غير صحيحة"}), 400
+    if data.new_password != data.confirm_password:
+        raise HTTPException(400, detail="كلمتا المرور غير متطابقتين")
 
-    if data.get("new_password") != data.get("confirm_password"):
-        return jsonify({"error": "كلمتا المرور غير متطابقتين"}), 400
-
-    if len(data.get("new_password", "")) < 6:
-        return jsonify({"error": "كلمة المرور يجب أن تكون 6 أحرف على الأقل"}), 400
-
-    user.set_password(data["new_password"])
-    db.session.commit()
-    return jsonify({"message": "تم تغيير كلمة المرور بنجاح"}), 200
+    user.set_password(data.new_password)
+    db.commit()
+    return {"message": "تم تغيير كلمة المرور بنجاح"}
 
 
-@auth_bp.route("/forgot-password", methods=["POST"])
-def forgot_password():
+@router.post("/forgot-password")
+def forgot_password(data: ForgotPassword, db: Session = Depends(get_db)):
     """Request password reset."""
-    data = request.get_json()
-    email = data.get("email", "").lower().strip()
-    user = User.query.filter_by(email=email).first()
+    email = data.email.lower().strip()
+    user = db.query(User).filter_by(email=email).first()
 
-    if not user:
-        return jsonify({"message": "إذا كان البريد مسجلاً، سيتم إرسال رمز إعادة التعيين"}), 200
+    if user:
+        token = "".join(random.choices(string.digits, k=6))
+        reset_tokens[email] = token
+        try:
+            send_password_reset_email(email, token)
+        except Exception:
+            pass
 
-    token = "".join(random.choices(string.digits, k=6))
-    reset_tokens[email] = token
-
-    try:
-        send_password_reset_email(email, token)
-    except Exception:
-        pass
-
-    return jsonify({"message": "إذا كان البريد مسجلاً، سيتم إرسال رمز إعادة التعيين"}), 200
+    return {"message": "إذا كان البريد مسجلاً، سيتم إرسال رمز إعادة التعيين"}
 
 
-@auth_bp.route("/reset-password", methods=["POST"])
-def reset_password():
+@router.post("/reset-password")
+def reset_password(data: ResetPassword, db: Session = Depends(get_db)):
     """Reset password with token."""
-    data = request.get_json()
-    email = data.get("email", "").lower().strip()
-    token = data.get("token", "")
-    new_password = data.get("new_password", "")
+    email = data.email.lower().strip()
 
-    if reset_tokens.get(email) != token:
-        return jsonify({"error": "رمز إعادة التعيين غير صحيح"}), 400
+    if reset_tokens.get(email) != data.token:
+        raise HTTPException(400, detail="رمز إعادة التعيين غير صحيح")
 
-    user = User.query.filter_by(email=email).first()
+    user = db.query(User).filter_by(email=email).first()
     if not user:
-        return jsonify({"error": "المستخدم غير موجود"}), 404
+        raise HTTPException(404, detail="المستخدم غير موجود")
 
-    user.set_password(new_password)
-    db.session.commit()
+    user.set_password(data.new_password)
+    db.commit()
     del reset_tokens[email]
 
-    return jsonify({"message": "تم إعادة تعيين كلمة المرور بنجاح"}), 200
-    
+    return {"message": "تم إعادة تعيين كلمة المرور بنجاح"}
