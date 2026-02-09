@@ -3,9 +3,10 @@ import api from '../utils/api';
 import toast from 'react-hot-toast';
 import { useAuth } from '../context/AuthContext';
 import {
-  Eye, CheckCircle, XCircle, ClipboardList, Trophy, Save,
-  BookOpen, Heart, Building2, Moon, Sun, Gem,
+  Eye, CheckCircle, XCircle, ClipboardList, Trophy, Save, Users,
+  BookOpen, Heart, Building2, Moon, Sun, Gem, User,
   Headphones, BookMarked, Lightbulb, HeartHandshake, Star, X, Filter,
+  Phone, Mail, MapPin, Calendar,
 } from 'lucide-react';
 import Pagination, { paginate } from '../components/Pagination';
 
@@ -23,25 +24,43 @@ const SCORE_FIELDS = [
   { key: 'extra_work', label: 'أعمال إضافية', icon: <Star size={14} /> },
 ];
 
+function getDefaultDateRange() {
+  const today = new Date();
+  const weekAgo = new Date(today);
+  weekAgo.setDate(today.getDate() - 6);
+  return {
+    from: weekAgo.toISOString().split('T')[0],
+    to: today.toISOString().split('T')[0],
+  };
+}
+
 export default function SupervisorPage() {
   const { user } = useAuth();
   const isSuperAdmin = user?.role === 'super_admin';
 
-  const [tab, setTab] = useState('daily');
+  const [tab, setTab] = useState('summary');
   const [halqas, setHalqas] = useState([]);
   const [selectedHalqaId, setSelectedHalqaId] = useState('');
   const [halqa, setHalqa] = useState(null);
-  const [dailySummary, setDailySummary] = useState(null);
-  const [weeklySummary, setWeeklySummary] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  // Summary tab
+  const [dateRange, setDateRange] = useState(getDefaultDateRange);
+  const [rangeSummary, setRangeSummary] = useState(null);
+  const [pageSummary, setPageSummary] = useState(1);
+
+  // Members tab
+  const [members, setMembers] = useState([]);
+  const [pageMembers, setPageMembers] = useState(1);
+  const [memberDetail, setMemberDetail] = useState(null);
+
+  // Leaderboard tab
   const [leaderboard, setLeaderboard] = useState([]);
+  const [pageLeaderboard, setPageLeaderboard] = useState(1);
+
+  // Card history modal
   const [selectedMember, setSelectedMember] = useState(null);
   const [memberCards, setMemberCards] = useState([]);
-  const [targetDate, setTargetDate] = useState(new Date().toISOString().split('T')[0]);
-  const [loading, setLoading] = useState(true);
-  const [pageSubmitted, setPageSubmitted] = useState(1);
-  const [pageNotSubmitted, setPageNotSubmitted] = useState(1);
-  const [pageWeekly, setPageWeekly] = useState(1);
-  const [pageLeaderboard, setPageLeaderboard] = useState(1);
 
   // Card detail/edit state
   const [cardMember, setCardMember] = useState(null);
@@ -64,14 +83,14 @@ export default function SupervisorPage() {
 
   useEffect(() => {
     setLoading(true);
-    if (tab === 'daily') {
-      api.get(`/supervisor/daily-summary?date=${targetDate}${halqaParam}`)
-        .then((res) => { setDailySummary(res.data); setHalqa(res.data.halqa); setPageSubmitted(1); setPageNotSubmitted(1); })
+    if (tab === 'summary') {
+      api.get(`/supervisor/range-summary?date_from=${dateRange.from}&date_to=${dateRange.to}${halqaParam}`)
+        .then((res) => { setRangeSummary(res.data); setHalqa(res.data.halqa); setPageSummary(1); })
         .catch((err) => toast.error(err.response?.data?.detail || 'خطأ'))
         .finally(() => setLoading(false));
-    } else if (tab === 'weekly') {
-      api.get(`/supervisor/weekly-summary?_=1${halqaParam}`)
-        .then((res) => { setWeeklySummary(res.data); setHalqa(res.data.halqa); setPageWeekly(1); })
+    } else if (tab === 'members') {
+      api.get(`/supervisor/members?_=1${halqaParam}`)
+        .then((res) => { setMembers(res.data.members); setHalqa(res.data.halqa); setPageMembers(1); })
         .catch((err) => toast.error(err.response?.data?.detail || 'خطأ'))
         .finally(() => setLoading(false));
     } else if (tab === 'leaderboard') {
@@ -80,7 +99,7 @@ export default function SupervisorPage() {
         .catch((err) => toast.error(err.response?.data?.detail || 'خطأ'))
         .finally(() => setLoading(false));
     }
-  }, [tab, targetDate, halqaParam]);
+  }, [tab, dateRange, halqaParam]);
 
   const viewMemberCards = async (memberId) => {
     try {
@@ -170,170 +189,259 @@ export default function SupervisorPage() {
       )}
 
       <div className="tabs">
-        <button className={`tab ${tab === 'daily' ? 'active' : ''}`} onClick={() => setTab('daily')}>
-          <ClipboardList size={14} /> الملخص اليومي
+        <button className={`tab ${tab === 'summary' ? 'active' : ''}`} onClick={() => setTab('summary')}>
+          <ClipboardList size={14} /> ملخص الفترة
         </button>
-        <button className={`tab ${tab === 'weekly' ? 'active' : ''}`} onClick={() => setTab('weekly')}>
-          <ClipboardList size={14} /> الملخص الأسبوعي
+        <button className={`tab ${tab === 'members' ? 'active' : ''}`} onClick={() => setTab('members')}>
+          <Users size={14} /> المشاركون
         </button>
         <button className={`tab ${tab === 'leaderboard' ? 'active' : ''}`} onClick={() => setTab('leaderboard')}>
-          <Trophy size={14} /> ترتيب الحلقة
+          <Trophy size={14} /> ترتيب الأعضاء
         </button>
       </div>
 
-      {loading ? (
-        <div className="loading"><div className="spinner" /></div>
-      ) : tab === 'daily' && dailySummary ? (
+      {/* ─── Summary Tab ─── */}
+      {tab === 'summary' && (
         <div>
-          <div className="form-group" style={{ maxWidth: 220 }}>
-            <label className="form-label">التاريخ</label>
-            <input type="date" className="form-input" value={targetDate}
-              onChange={(e) => setTargetDate(e.target.value)} dir="ltr" />
-          </div>
-
-          <div className="stats-grid">
-            <div className="stat-card">
-              <div className="stat-icon"><CheckCircle size={20} /></div>
-              <div className="stat-value">{dailySummary.submitted_count}</div>
-              <div className="stat-label">سلّموا البطاقة</div>
+          <div className="filters-bar mb-2">
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+              <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>من</label>
+              <input type="date" className="filter-input" value={dateRange.from}
+                onChange={(e) => setDateRange((d) => ({ ...d, from: e.target.value }))} dir="ltr" />
             </div>
-            <div className="stat-card">
-              <div className="stat-icon"><XCircle size={20} /></div>
-              <div className="stat-value danger">{dailySummary.not_submitted_count}</div>
-              <div className="stat-label">لم يسلّموا</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-value gold">{dailySummary.total_members}</div>
-              <div className="stat-label">إجمالي الأعضاء</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+              <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>إلى</label>
+              <input type="date" className="filter-input" value={dateRange.to}
+                onChange={(e) => setDateRange((d) => ({ ...d, to: e.target.value }))} dir="ltr" />
             </div>
           </div>
 
-          {dailySummary.submitted.length > 0 && (
-            <div className="card mb-2">
-              <div className="card-title mb-2"><CheckCircle size={16} /> سلّموا البطاقة ({dailySummary.submitted.length})</div>
-              <div className="table-container">
-                <table>
-                  <thead>
-                    <tr><th>الاسم</th><th>المجموع</th><th>النسبة</th><th>التفاصيل</th></tr>
-                  </thead>
-                  <tbody>
-                    {paginate(dailySummary.submitted, pageSubmitted).paged.map(({ member, card }) => (
-                      <tr key={member.id}>
-                        <td>{member.full_name}</td>
-                        <td>{card.total_score}</td>
-                        <td><span className="badge badge-success">{card.percentage}%</span></td>
-                        <td>
-                          <button className="btn btn-secondary btn-sm" onClick={() => openCardDetail(member.id, targetDate)}>
-                            عرض / تعديل
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+          {loading ? (
+            <div className="loading"><div className="spinner" /></div>
+          ) : rangeSummary ? (
+            <div>
+              <div className="stats-grid">
+                <div className="stat-card">
+                  <div className="stat-icon"><Users size={20} /></div>
+                  <div className="stat-value">{rangeSummary.summary.length}</div>
+                  <div className="stat-label">إجمالي المشاركين</div>
+                </div>
+                <div className="stat-card">
+                  <div className="stat-icon"><Calendar size={20} /></div>
+                  <div className="stat-value gold">{rangeSummary.total_days}</div>
+                  <div className="stat-label">عدد الأيام</div>
+                </div>
               </div>
-              <Pagination page={pageSubmitted} totalPages={paginate(dailySummary.submitted, pageSubmitted).totalPages}
-                total={dailySummary.submitted.length} onPageChange={setPageSubmitted} />
-            </div>
-          )}
 
-          {dailySummary.not_submitted.length > 0 && (
-            <div className="card">
-              <div className="card-title mb-2"><XCircle size={16} /> لم يسلّموا ({dailySummary.not_submitted.length})</div>
-              <div className="table-container">
-                <table>
-                  <thead><tr><th>الاسم</th><th>الهاتف</th><th>إجراء</th></tr></thead>
-                  <tbody>
-                    {paginate(dailySummary.not_submitted, pageNotSubmitted).paged.map((m) => (
-                      <tr key={m.id}>
-                        <td>{m.full_name}</td>
-                        <td dir="ltr">{m.phone}</td>
-                        <td>
-                          <button className="btn btn-primary btn-sm" onClick={() => openCardDetail(m.id, targetDate)}>
-                            إدخال بطاقة
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <Pagination page={pageNotSubmitted} totalPages={paginate(dailySummary.not_submitted, pageNotSubmitted).totalPages}
-                total={dailySummary.not_submitted.length} onPageChange={setPageNotSubmitted} />
+              {rangeSummary.summary.length === 0 ? (
+                <div className="empty-state">
+                  <div className="empty-state-icon"><ClipboardList size={48} /></div>
+                  <div className="empty-state-text">لا توجد بيانات</div>
+                </div>
+              ) : (
+                <div className="card">
+                  <div className="table-container">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>#</th><th>الاسم</th><th>البطاقات</th>
+                          <th>المجموع</th><th>النسبة</th><th>التفاصيل</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {paginate(rangeSummary.summary, pageSummary).paged.map((s, i) => (
+                          <tr key={s.member.id}>
+                            <td>{(pageSummary - 1) * 10 + i + 1}</td>
+                            <td style={{ fontWeight: 600 }}>{s.member.full_name}</td>
+                            <td>{s.cards_submitted} / {s.total_days}</td>
+                            <td style={{ fontWeight: 700, color: 'var(--accent)' }}>{s.total_score}</td>
+                            <td>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                <div className="progress-bar" style={{ width: 50, height: 6 }}>
+                                  <div className="progress-fill green" style={{ width: `${s.percentage}%` }} />
+                                </div>
+                                <span style={{ fontWeight: 700, fontSize: '0.8rem' }}>{s.percentage}%</span>
+                              </div>
+                            </td>
+                            <td>
+                              <button className="btn btn-secondary btn-sm" onClick={() => viewMemberCards(s.member.id)}>
+                                عرض
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <Pagination page={pageSummary} totalPages={paginate(rangeSummary.summary, pageSummary).totalPages}
+                    total={rangeSummary.summary.length} onPageChange={setPageSummary} />
+                </div>
+              )}
             </div>
-          )}
+          ) : null}
         </div>
-      ) : tab === 'weekly' && weeklySummary ? (
-        <div>
-          <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
-            من {weeklySummary.week_start} إلى {weeklySummary.week_end}
-          </p>
+      )}
+
+      {/* ─── Members Tab ─── */}
+      {tab === 'members' && (
+        loading ? (
+          <div className="loading"><div className="spinner" /></div>
+        ) : members.length === 0 ? (
+          <div className="empty-state">
+            <div className="empty-state-icon"><Users size={48} /></div>
+            <div className="empty-state-text">لا يوجد مشاركون</div>
+          </div>
+        ) : (
           <div className="card">
             <div className="table-container">
               <table>
-                <thead><tr><th>#</th><th>الاسم</th><th>البطاقات</th><th>المجموع</th><th>النسبة</th><th>التفاصيل</th></tr></thead>
+                <thead>
+                  <tr>
+                    <th>#</th><th>الاسم</th><th>الجنس</th><th>الهاتف</th>
+                    <th>البريد</th><th>الدولة</th><th>إجراء</th>
+                  </tr>
+                </thead>
                 <tbody>
-                  {paginate(weeklySummary.summary, pageWeekly).paged.map((s, i) => (
-                    <tr key={s.member.id}>
-                      <td>{(pageWeekly - 1) * 10 + i + 1}</td>
-                      <td>{s.member.full_name}</td>
-                      <td>{s.cards_submitted}</td>
-                      <td>{s.total_score}</td>
-                      <td><span className="badge badge-success">{s.percentage}%</span></td>
-                      <td><button className="btn btn-secondary btn-sm" onClick={() => viewMemberCards(s.member.id)}>عرض</button></td>
+                  {paginate(members, pageMembers).paged.map((m, i) => (
+                    <tr key={m.id}>
+                      <td>{(pageMembers - 1) * 10 + i + 1}</td>
+                      <td style={{ fontWeight: 600 }}>{m.full_name}</td>
+                      <td>{['male', 'ذكر'].includes(m.gender) ? 'ذكر' : 'أنثى'}</td>
+                      <td dir="ltr" style={{ fontSize: '0.8rem' }}>{m.phone}</td>
+                      <td dir="ltr" style={{ fontSize: '0.8rem' }}>{m.email}</td>
+                      <td>{m.country}</td>
+                      <td>
+                        <div className="btn-group">
+                          <button className="btn btn-secondary btn-sm" onClick={() => setMemberDetail(m)}>
+                            <User size={13} />
+                          </button>
+                          <button className="btn btn-secondary btn-sm" onClick={() => viewMemberCards(m.id)}>
+                            <ClipboardList size={13} />
+                          </button>
+                        </div>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-            <Pagination page={pageWeekly} totalPages={paginate(weeklySummary.summary, pageWeekly).totalPages}
-              total={weeklySummary.summary.length} onPageChange={setPageWeekly} />
+            <Pagination page={pageMembers} totalPages={paginate(members, pageMembers).totalPages}
+              total={members.length} onPageChange={setPageMembers} />
+          </div>
+        )
+      )}
+
+      {/* ─── Leaderboard Tab ─── */}
+      {tab === 'leaderboard' && (
+        loading ? (
+          <div className="loading"><div className="spinner" /></div>
+        ) : leaderboard.length === 0 ? (
+          <div className="empty-state">
+            <div className="empty-state-icon"><Trophy size={48} /></div>
+            <div className="empty-state-text">لا توجد بيانات بعد</div>
+          </div>
+        ) : (
+          <div className="card">
+            <div className="table-container">
+              <table>
+                <thead>
+                  <tr><th>#</th><th>الاسم</th><th>المجموع</th><th>البطاقات</th><th>النسبة</th></tr>
+                </thead>
+                <tbody>
+                  {paginate(leaderboard, pageLeaderboard).paged.map((r) => (
+                    <tr key={r.user_id}>
+                      <td style={{ fontWeight: 800, color: r.rank <= 3 ? 'var(--gold)' : 'var(--text-muted)' }}>
+                        {r.rank}
+                      </td>
+                      <td style={{ fontWeight: 600 }}>{r.full_name}</td>
+                      <td style={{ fontWeight: 700, color: 'var(--accent)' }}>{r.total_score}</td>
+                      <td>{r.cards_count}</td>
+                      <td>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          <div className="progress-bar" style={{ width: 60, height: 6 }}>
+                            <div className="progress-fill green" style={{ width: `${r.percentage}%` }} />
+                          </div>
+                          <span style={{ fontWeight: 700, fontSize: '0.8rem' }}>{r.percentage}%</span>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <Pagination page={pageLeaderboard} totalPages={paginate(leaderboard, pageLeaderboard).totalPages}
+              total={leaderboard.length} onPageChange={setPageLeaderboard} />
+          </div>
+        )
+      )}
+
+      {/* ─── Member Detail Modal ─── */}
+      {memberDetail && (
+        <div className="modal-overlay" onClick={() => setMemberDetail(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 450 }}>
+            <div className="flex-between mb-2">
+              <div className="modal-title" style={{ margin: 0 }}>
+                <User size={18} /> بيانات المشارك
+              </div>
+              <button className="btn btn-secondary btn-sm" onClick={() => setMemberDetail(null)}>
+                <X size={16} />
+              </button>
+            </div>
+
+            <div style={{
+              display: 'flex', flexDirection: 'column', alignItems: 'center',
+              padding: '1rem 0 0.75rem', borderBottom: '1px solid var(--border)', marginBottom: '0.75rem',
+            }}>
+              <div style={{
+                width: 56, height: 56, borderRadius: '50%', background: 'var(--primary-light)',
+                color: 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: '1.3rem', fontWeight: 800, marginBottom: '0.5rem',
+              }}>
+                {memberDetail.full_name?.charAt(0)}
+              </div>
+              <div style={{ fontWeight: 700, fontSize: '1.05rem', color: 'var(--text-primary)' }}>
+                {memberDetail.full_name}
+              </div>
+              <span className={`badge ${memberDetail.gender === 'male' || memberDetail.gender === 'ذكر' ? 'badge-info' : 'badge-warning'}`}
+                style={{ marginTop: '0.3rem' }}>
+                {['male', 'ذكر'].includes(memberDetail.gender) ? 'ذكر' : 'أنثى'}
+                {memberDetail.age ? ` — ${memberDetail.age} سنة` : ''}
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+              {[
+                { icon: <Phone size={15} />, label: 'الهاتف', value: memberDetail.phone, dir: 'ltr' },
+                { icon: <Mail size={15} />, label: 'البريد', value: memberDetail.email, dir: 'ltr' },
+                { icon: <MapPin size={15} />, label: 'الدولة', value: memberDetail.country },
+                { icon: <Calendar size={15} />, label: 'تاريخ التسجيل', value: memberDetail.created_at?.split('T')[0], dir: 'ltr' },
+              ].map((item, i) => item.value ? (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}>
+                  <span style={{ color: 'var(--primary)', minWidth: 20, display: 'flex' }}>{item.icon}</span>
+                  <span style={{ color: 'var(--text-muted)', minWidth: 70 }}>{item.label}:</span>
+                  <span style={{ fontWeight: 600, color: 'var(--text-primary)' }} dir={item.dir}>{item.value}</span>
+                </div>
+              ) : null)}
+              {memberDetail.referral_source && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}>
+                  <span style={{ color: 'var(--primary)', minWidth: 20, display: 'flex' }}><Star size={15} /></span>
+                  <span style={{ color: 'var(--text-muted)', minWidth: 70 }}>المصدر:</span>
+                  <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{memberDetail.referral_source}</span>
+                </div>
+              )}
+            </div>
+
+            <div className="btn-group mt-2">
+              <button className="btn btn-primary btn-sm" onClick={() => { viewMemberCards(memberDetail.id); setMemberDetail(null); }}>
+                <ClipboardList size={14} /> عرض البطاقات
+              </button>
+              <button className="btn btn-secondary btn-sm" onClick={() => setMemberDetail(null)}>إغلاق</button>
+            </div>
           </div>
         </div>
-      ) : tab === 'leaderboard' ? (
-        <div className="card">
-          {leaderboard.length === 0 ? (
-            <div className="empty-state">
-              <div className="empty-state-icon"><Trophy size={48} /></div>
-              <div className="empty-state-text">لا توجد بيانات بعد</div>
-            </div>
-          ) : (
-            <>
-              <div className="table-container">
-                <table>
-                  <thead>
-                    <tr><th>#</th><th>الاسم</th><th>المجموع</th><th>البطاقات</th><th>النسبة</th></tr>
-                  </thead>
-                  <tbody>
-                    {paginate(leaderboard, pageLeaderboard).paged.map((r) => (
-                      <tr key={r.user_id}>
-                        <td style={{ fontWeight: 800, color: r.rank <= 3 ? 'var(--gold)' : 'var(--text-muted)' }}>
-                          {r.rank}
-                        </td>
-                        <td style={{ fontWeight: 600 }}>{r.full_name}</td>
-                        <td style={{ fontWeight: 700, color: 'var(--accent)' }}>{r.total_score}</td>
-                        <td>{r.cards_count}</td>
-                        <td>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                            <div className="progress-bar" style={{ width: 60, height: 6 }}>
-                              <div className="progress-fill green" style={{ width: `${r.percentage}%` }} />
-                            </div>
-                            <span style={{ fontWeight: 700, fontSize: '0.8rem' }}>{r.percentage}%</span>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <Pagination page={pageLeaderboard} totalPages={paginate(leaderboard, pageLeaderboard).totalPages}
-                total={leaderboard.length} onPageChange={setPageLeaderboard} />
-            </>
-          )}
-        </div>
-      ) : null}
+      )}
 
-      {/* Member Cards History Modal */}
+      {/* ─── Member Cards History Modal ─── */}
       {selectedMember && (
         <div className="modal-overlay" onClick={() => setSelectedMember(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 700 }}>
@@ -375,7 +483,7 @@ export default function SupervisorPage() {
         </div>
       )}
 
-      {/* Card Detail / Edit Modal */}
+      {/* ─── Card Detail / Edit Modal ─── */}
       {cardMember && (
         <div className="modal-overlay" onClick={closeCardDetail}>
           <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 550 }}>

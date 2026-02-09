@@ -488,8 +488,8 @@ def export_data(
             "المشرف": r["supervisor_name"],
             "مجموع النقاط": r["total_score"],
             "الحد الأعلى": r["max_score"],
-            "النسبة %": r["percentage"],
             "عدد البطاقات": r["cards_count"],
+            "النسبة %": r["percentage"],
         })
 
     if format == "xlsx":

@@ -218,6 +218,54 @@ def get_daily_summary(
     }
 
 
+@router.get("/range-summary")
+def get_range_summary(
+    halqa_id: int = Query(None),
+    date_from: str = Query(None),
+    date_to: str = Query(None),
+    user: User = Depends(require_supervisor),
+    db: Session = Depends(get_db),
+):
+    """Get summary for a custom date range."""
+    today = date.today()
+    start = date.fromisoformat(date_from) if date_from else today - timedelta(days=6)
+    end = date.fromisoformat(date_to) if date_to else today
+    total_days = (end - start).days + 1
+
+    halqa = _resolve_halqa(user, db, halqa_id)
+    members = _get_members(db, halqa)
+    summary = []
+
+    for member in members:
+        cards = db.query(DailyCard).filter(
+            DailyCard.user_id == member.id,
+            DailyCard.date >= start,
+            DailyCard.date <= end,
+        ).all()
+
+        total = sum(c.total_score for c in cards)
+        max_total = sum(c.max_score for c in cards) if cards else 0
+        pct = round((total / max_total) * 100, 1) if max_total > 0 else 0
+
+        summary.append({
+            "member": user_to_response(member),
+            "cards_submitted": len(cards),
+            "total_days": total_days,
+            "total_score": total,
+            "percentage": pct,
+        })
+
+    summary.sort(key=lambda x: x["total_score"], reverse=True)
+
+    return {
+        "halqa": halqa_to_response(halqa) if halqa else None,
+        "date_from": start.isoformat(),
+        "date_to": end.isoformat(),
+        "total_days": total_days,
+        "summary": summary,
+    }
+
+
 @router.get("/weekly-summary")
 def get_weekly_summary(
     halqa_id: int = Query(None),
