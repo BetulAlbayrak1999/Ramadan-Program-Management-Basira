@@ -4,17 +4,17 @@ from pydantic import BaseModel, Field
 
 class DailyCardCreate(BaseModel):
     date: date
-    quran: int = Field(default=0, ge=0, le=10)
-    duas: int = Field(default=0, ge=0, le=10)
-    taraweeh: int = Field(default=0, ge=0, le=10)
-    tahajjud: int = Field(default=0, ge=0, le=10)
-    duha: int = Field(default=0, ge=0, le=10)
-    rawatib: int = Field(default=0, ge=0, le=10)
-    main_lesson: int = Field(default=0, ge=0, le=10)
-    required_lesson: int = Field(default=0, ge=0, le=10)
-    enrichment_lesson: int = Field(default=0, ge=0, le=10)
-    charity_worship: int = Field(default=0, ge=0, le=10)
-    extra_work: int = Field(default=0, ge=0, le=10)
+    quran: float = Field(default=0, ge=0, le=10)
+    duas: float = Field(default=0, ge=0, le=10)
+    taraweeh: float = Field(default=0, ge=0, le=10)
+    tahajjud: float = Field(default=0, ge=0, le=10)
+    duha: float = Field(default=0, ge=0, le=10)
+    rawatib: float = Field(default=0, ge=0, le=10)
+    main_lesson: float = Field(default=0, ge=0, le=10)
+    required_lesson: float = Field(default=0, ge=0, le=10)
+    enrichment_lesson: float = Field(default=0, ge=0, le=10)
+    charity_worship: float = Field(default=0, ge=0, le=10)
+    extra_work: float = Field(default=0, ge=0, le=10)
     extra_work_description: str = ""
 
 

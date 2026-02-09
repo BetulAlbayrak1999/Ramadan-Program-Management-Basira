@@ -43,7 +43,9 @@ function AppRoutes() {
         <Route index element={<Navigate to="/dashboard" />} />
         <Route path="dashboard" element={<DashboardPage />} />
         <Route path="daily-card" element={<DailyCardPage />} />
-        <Route path="leaderboard" element={<LeaderboardPage />} />
+        <Route path="leaderboard" element={
+          <ProtectedRoute roles={['supervisor', 'super_admin']}><LeaderboardPage /></ProtectedRoute>
+        } />
         <Route path="profile" element={<ProfilePage />} />
 
         <Route path="supervisor" element={
@@ -74,9 +76,9 @@ export default function App() {
     <BrowserRouter>
       <AuthProvider>
         <Toaster position="top-center" toastOptions={{
-          style: { background: '#1a3527', color: '#e8f0ec', border: '1px solid #2a5a3d', fontFamily: 'Noto Kufi Arabic' },
-          success: { iconTheme: { primary: '#4ade80', secondary: '#0f1f17' } },
-          error: { iconTheme: { primary: '#f87171', secondary: '#0f1f17' } },
+          style: { background: '#1a3a3a', color: '#e8f5f0', border: '1px solid #2d5a5a', fontFamily: 'Noto Kufi Arabic' },
+          success: { iconTheme: { primary: '#27ae60', secondary: '#1a3a3a' } },
+          error: { iconTheme: { primary: '#e74c3c', secondary: '#1a3a3a' } },
         }} />
         <AppRoutes />
       </AuthProvider>

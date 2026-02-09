@@ -46,7 +46,7 @@ cp .env .env.local
 python run.py
 ```
 
-السيرفر يعمل على: `http://localhost:5000`
+السيرفر يعمل على: `http://localhost:8000`
 
 ### 3. الفرونت إند (Frontend)
 

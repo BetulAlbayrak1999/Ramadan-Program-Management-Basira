@@ -1,12 +1,10 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
-
-const icons = {
-  dashboard: '📊', card: '📝', leaderboard: '🏆', profile: '👤',
-  supervisor: '👁', users: '👥', halqas: '🔵', analytics: '📈',
-  settings: '⚙️', logout: '🚪', menu: '☰', close: '✕',
-};
+import {
+  LayoutDashboard, FileEdit, Trophy, User, Eye, Users,
+  CircleDot, BarChart3, Settings, LogOut, Menu, X, Moon,
+} from 'lucide-react';
 
 export default function Layout() {
   const { user, logout } = useAuth();
@@ -17,21 +15,24 @@ export default function Layout() {
   const closeSidebar = () => setSidebarOpen(false);
 
   const navItems = [
-    { to: '/dashboard', icon: icons.dashboard, label: 'لوحة القيادة' },
-    { to: '/daily-card', icon: icons.card, label: 'البطاقة الرمضانية' },
-    { to: '/leaderboard', icon: icons.leaderboard, label: 'الترتيب العام' },
-    { to: '/profile', icon: icons.profile, label: 'الملف الشخصي' },
+    { to: '/dashboard', icon: <LayoutDashboard size={18} />, label: 'لوحة القيادة' },
+    { to: '/daily-card', icon: <FileEdit size={18} />, label: 'البطاقة الرمضانية' },
+    { to: '/profile', icon: <User size={18} />, label: 'الملف الشخصي' },
+  ];
+
+  const supervisorNavItems = [
+    { to: '/leaderboard', icon: <Trophy size={18} />, label: 'الترتيب العام' },
   ];
 
   const supervisorItems = [
-    { to: '/supervisor', icon: icons.supervisor, label: 'إشراف الحلقة' },
+    { to: '/supervisor', icon: <Eye size={18} />, label: 'إشراف الحلقة' },
   ];
 
   const adminItems = [
-    { to: '/admin/users', icon: icons.users, label: 'إدارة المستخدمين' },
-    { to: '/admin/halqas', icon: icons.halqas, label: 'إدارة الحلقات' },
-    { to: '/admin/analytics', icon: icons.analytics, label: 'التحليلات والنقاط' },
-    { to: '/admin/settings', icon: icons.settings, label: 'الإعدادات' },
+    { to: '/admin/users', icon: <Users size={18} />, label: 'إدارة المستخدمين' },
+    { to: '/admin/halqas', icon: <CircleDot size={18} />, label: 'إدارة الحلقات' },
+    { to: '/admin/analytics', icon: <BarChart3 size={18} />, label: 'التحليلات والنقاط' },
+    { to: '/admin/settings', icon: <Settings size={18} />, label: 'الإعدادات' },
   ];
 
   const roleLabel = {
@@ -44,7 +45,7 @@ export default function Layout() {
     <div className="app-layout">
       {/* Mobile Header */}
       <div className="mobile-header">
-        <button className="hamburger" onClick={() => setSidebarOpen(true)}>{icons.menu}</button>
+        <button className="hamburger" onClick={() => setSidebarOpen(true)}><Menu size={22} /></button>
         <span className="mobile-logo">المنصة الرمضانية</span>
         <span style={{ width: 40 }} />
       </div>
@@ -56,10 +57,10 @@ export default function Layout() {
       <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
         <div className="sidebar-header">
           <button className="hamburger" onClick={closeSidebar}
-            style={{ display: sidebarOpen ? 'block' : 'none', position: 'absolute', left: '1rem', top: '1rem' }}>
-            {icons.close}
+            style={{ display: sidebarOpen ? 'flex' : 'none', position: 'absolute', left: '1rem', top: '1rem' }}>
+            <X size={20} />
           </button>
-          <div className="sidebar-logo">🌙 المنصة الرمضانية</div>
+          <div className="sidebar-logo"><Moon size={20} /> المنصة الرمضانية</div>
           <div className="sidebar-subtitle">متابعة الإنجاز اليومي</div>
         </div>
 
@@ -68,17 +69,23 @@ export default function Layout() {
           {navItems.map((item) => (
             <NavLink key={item.to} to={item.to} className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
               onClick={closeSidebar}>
-              <span>{item.icon}</span> {item.label}
+              {item.icon} {item.label}
             </NavLink>
           ))}
 
           {(user?.role === 'supervisor' || user?.role === 'super_admin') && (
             <>
               <div className="nav-section-title">الإشراف</div>
+              {supervisorNavItems.map((item) => (
+                <NavLink key={item.to} to={item.to} className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+                  onClick={closeSidebar}>
+                  {item.icon} {item.label}
+                </NavLink>
+              ))}
               {supervisorItems.map((item) => (
                 <NavLink key={item.to} to={item.to} className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
                   onClick={closeSidebar}>
-                  <span>{item.icon}</span> {item.label}
+                  {item.icon} {item.label}
                 </NavLink>
               ))}
             </>
@@ -90,7 +97,7 @@ export default function Layout() {
               {adminItems.map((item) => (
                 <NavLink key={item.to} to={item.to} className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
                   onClick={closeSidebar}>
-                  <span>{item.icon}</span> {item.label}
+                  {item.icon} {item.label}
                 </NavLink>
               ))}
             </>
@@ -106,7 +113,7 @@ export default function Layout() {
             </div>
           </div>
           <button className="nav-item" onClick={handleLogout}>
-            <span>{icons.logout}</span> تسجيل الخروج
+            <LogOut size={18} /> تسجيل الخروج
           </button>
         </div>
       </aside>

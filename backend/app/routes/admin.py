@@ -320,21 +320,21 @@ def assign_user_halqa(
 # ─── Analytics Dashboard ──────────────────────────────────────────────────────
 
 
-@router.get("/analytics")
-def get_analytics(
-    gender: str = Query(None),
-    halqa_id: int = Query(None),
-    supervisor: str = Query(None),
-    member: str = Query(None),
-    min_pct: float = Query(None),
-    max_pct: float = Query(None),
-    period: str = Query("all"),
-    sort_by: str = Query("score"),
-    sort_order: str = Query("desc"),
-    admin: User = Depends(require_admin),
-    db: Session = Depends(get_db),
+def _build_analytics_results(
+    db: Session,
+    gender: str = None,
+    halqa_id: int = None,
+    supervisor: str = None,
+    member: str = None,
+    min_pct: float = None,
+    max_pct: float = None,
+    period: str = "all",
+    date_from: str = None,
+    date_to: str = None,
+    sort_by: str = "score",
+    sort_order: str = "desc",
 ):
-    """Get comprehensive analytics."""
+    """Shared helper for analytics and export."""
     query = db.query(User).filter_by(status="active")
 
     if gender:
@@ -355,25 +355,32 @@ def get_analytics(
 
     # Date range
     today = date.today()
-    if period == "weekly":
+    start_date = None
+    end_date = None
+
+    if date_from:
+        start_date = date.fromisoformat(date_from)
+    elif period == "weekly":
         start_date = today - timedelta(days=today.weekday())
     elif period == "monthly":
         start_date = today.replace(day=1)
-    else:
-        start_date = None
+
+    if date_to:
+        end_date = date.fromisoformat(date_to)
 
     results = []
     for u in users:
         card_query = db.query(DailyCard).filter_by(user_id=u.id)
         if start_date:
             card_query = card_query.filter(DailyCard.date >= start_date)
+        if end_date:
+            card_query = card_query.filter(DailyCard.date <= end_date)
 
         cards = card_query.all()
         total = sum(c.total_score for c in cards)
         max_total = sum(c.max_score for c in cards) if cards else 0
         pct = round((total / max_total) * 100, 1) if max_total > 0 else 0
 
-        # Apply percentage filter
         if min_pct is not None and pct < min_pct:
             continue
         if max_pct is not None and pct > max_pct:
@@ -391,17 +398,40 @@ def get_analytics(
             "cards_count": len(cards),
         })
 
-    # Sorting
     if sort_by == "name":
         results.sort(key=lambda x: x["full_name"], reverse=(sort_order == "desc"))
     else:
         results.sort(key=lambda x: x["total_score"], reverse=(sort_order == "desc"))
 
-    # Add ranks
     for i, r in enumerate(results):
         r["rank"] = i + 1
 
-    # Summary stats
+    return results
+
+
+@router.get("/analytics")
+def get_analytics(
+    gender: str = Query(None),
+    halqa_id: int = Query(None),
+    supervisor: str = Query(None),
+    member: str = Query(None),
+    min_pct: float = Query(None),
+    max_pct: float = Query(None),
+    period: str = Query("all"),
+    date_from: str = Query(None),
+    date_to: str = Query(None),
+    sort_by: str = Query("score"),
+    sort_order: str = Query("desc"),
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Get comprehensive analytics."""
+    results = _build_analytics_results(
+        db, gender=gender, halqa_id=halqa_id, supervisor=supervisor,
+        member=member, min_pct=min_pct, max_pct=max_pct, period=period,
+        date_from=date_from, date_to=date_to, sort_by=sort_by, sort_order=sort_order,
+    )
+
     total_active = db.query(User).filter_by(status="active").count()
     total_pending = db.query(User).filter_by(status="pending").count()
     total_halqas = db.query(Halqa).count()
@@ -425,56 +455,48 @@ def export_data(
     format: str = Query("csv"),
     gender: str = Query(None),
     halqa_id: int = Query(None),
+    supervisor: str = Query(None),
+    member: str = Query(None),
+    min_pct: float = Query(None),
+    max_pct: float = Query(None),
     period: str = Query("all"),
+    date_from: str = Query(None),
+    date_to: str = Query(None),
+    sort_by: str = Query("score"),
+    sort_order: str = Query("desc"),
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    """Export analytics data as CSV or XLSX."""
+    """Export analytics data as CSV or XLSX with all applied filters."""
     import csv
     from openpyxl import Workbook
 
-    query = db.query(User).filter_by(status="active")
-    if gender:
-        query = query.filter_by(gender=gender)
-    if halqa_id:
-        query = query.filter_by(halqa_id=halqa_id)
+    results = _build_analytics_results(
+        db, gender=gender, halqa_id=halqa_id, supervisor=supervisor,
+        member=member, min_pct=min_pct, max_pct=max_pct, period=period,
+        date_from=date_from, date_to=date_to, sort_by=sort_by, sort_order=sort_order,
+    )
 
-    users = query.all()
-    today = date.today()
-    if period == "weekly":
-        start_date = today - timedelta(days=today.weekday())
-    elif period == "monthly":
-        start_date = today.replace(day=1)
-    else:
-        start_date = None
-
+    gender_map = {"male": "ذكر", "female": "أنثى"}
     rows = []
-    for u in users:
-        card_query = db.query(DailyCard).filter_by(user_id=u.id)
-        if start_date:
-            card_query = card_query.filter(DailyCard.date >= start_date)
-        cards = card_query.all()
-        total = sum(c.total_score for c in cards)
-        max_total = sum(c.max_score for c in cards) if cards else 0
-        pct = round((total / max_total) * 100, 1) if max_total > 0 else 0
-
+    for r in results:
         rows.append({
-            "الاسم": u.full_name,
-            "الجنس": u.gender,
-            "الحلقة": u.halqa.name if u.halqa else "-",
-            "المشرف": u.halqa.supervisor.full_name if u.halqa and u.halqa.supervisor else "-",
-            "مجموع النقاط": total,
-            "الحد الأعلى": max_total,
-            "النسبة %": pct,
-            "عدد البطاقات": len(cards),
+            "الترتيب": r["rank"],
+            "الاسم": r["full_name"],
+            "الجنس": gender_map.get(r["gender"], r["gender"]),
+            "الحلقة": r["halqa_name"],
+            "المشرف": r["supervisor_name"],
+            "مجموع النقاط": r["total_score"],
+            "الحد الأعلى": r["max_score"],
+            "النسبة %": r["percentage"],
+            "عدد البطاقات": r["cards_count"],
         })
-
-    rows.sort(key=lambda x: x["مجموع النقاط"], reverse=True)
 
     if format == "xlsx":
         wb = Workbook()
         ws = wb.active
         ws.title = "النتائج"
+        ws.sheet_view.rightToLeft = True
 
         if rows:
             headers = list(rows[0].keys())
@@ -491,15 +513,17 @@ def export_data(
             headers={"Content-Disposition": "attachment; filename=ramadan_results.xlsx"},
         )
     else:
+        # UTF-8 BOM so Excel opens Arabic correctly
         output = io.StringIO()
         if rows:
             writer = csv.DictWriter(output, fieldnames=rows[0].keys())
             writer.writeheader()
             writer.writerows(rows)
 
+        csv_bytes = "\ufeff" + output.getvalue()
         return Response(
-            content=output.getvalue(),
-            media_type="text/csv; charset=utf-8",
+            content=csv_bytes.encode("utf-8"),
+            media_type="text/csv; charset=utf-8-sig",
             headers={"Content-Disposition": "attachment; filename=ramadan_results.csv"},
         )
 
@@ -525,35 +549,56 @@ def import_users(
 
     imported = 0
     errors = []
+    seen_emails = set()
 
     for row_idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+        # Skip completely empty rows
+        if all(cell is None or str(cell).strip() == "" for cell in row):
+            continue
         row_data = dict(zip(headers, row))
         try:
-            email = str(row_data.get("البريد", "")).lower().strip()
-            if not email or db.query(User).filter_by(email=email).first():
-                errors.append(f"صف {row_idx}: بريد مكرر أو فارغ")
+            raw_email = row_data.get("البريد")
+            email = str(raw_email).lower().strip() if raw_email is not None else ""
+            if not email or email == "none":
+                errors.append(f"صف {row_idx}: البريد فارغ")
+                continue
+            if email in seen_emails:
+                errors.append(f"صف {row_idx}: بريد مكرر في الملف")
+                continue
+            if db.query(User).filter_by(email=email).first():
+                errors.append(f"صف {row_idx}: البريد مسجل مسبقاً ({email})")
                 continue
 
+            seen_emails.add(email)
+            raw_gender = str(row_data.get("الجنس", "")).strip()
+            gender_map = {"ذكر": "male", "أنثى": "female", "male": "male", "female": "female"}
+            gender = gender_map.get(raw_gender, raw_gender)
+
+            raw_age = row_data.get("العمر", 0)
+            age = int(raw_age) if raw_age is not None and str(raw_age).strip() else 0
+
             user = User(
-                full_name=str(row_data.get("الاسم", "")).strip(),
-                gender=str(row_data.get("الجنس", "")).strip(),
-                age=int(row_data.get("العمر", 0)),
-                phone=str(row_data.get("الهاتف", "")).strip(),
+                full_name=str(row_data.get("الاسم") or "").strip(),
+                gender=gender,
+                age=age,
+                phone=str(row_data.get("الهاتف") or "").strip(),
                 email=email,
-                country=str(row_data.get("الدولة", "")).strip(),
-                referral_source=str(row_data.get("المصدر", "")).strip(),
-                status="active",
+                country=str(row_data.get("الدولة") or "").strip(),
+                referral_source=str(row_data.get("المصدر") or "").strip(),
+                status="pending",
                 role="participant",
             )
             user.set_password("123456")  # Default password
             db.add(user)
+            db.flush()
             imported += 1
         except Exception as e:
+            db.rollback()
             errors.append(f"صف {row_idx}: {str(e)}")
 
     db.commit()
     return {
-        "message": f"تم استيراد {imported} مشارك",
+        "message": f"تم استيراد {imported} مشارك في قائمة الانتظار",
         "errors": errors,
     }
 

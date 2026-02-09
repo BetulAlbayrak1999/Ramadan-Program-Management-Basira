@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, Text, Date, DateTime, ForeignKey, UniqueConstraint
+from sqlalchemy import Column, Integer, Float, Text, Date, DateTime, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -13,18 +13,18 @@ class DailyCard(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     date = Column(Date, nullable=False)
 
-    # Score fields (0-10 each)
-    quran = Column(Integer, default=0)
-    duas = Column(Integer, default=0)
-    taraweeh = Column(Integer, default=0)
-    tahajjud = Column(Integer, default=0)
-    duha = Column(Integer, default=0)
-    rawatib = Column(Integer, default=0)
-    main_lesson = Column(Integer, default=0)
-    required_lesson = Column(Integer, default=0)
-    enrichment_lesson = Column(Integer, default=0)
-    charity_worship = Column(Integer, default=0)
-    extra_work = Column(Integer, default=0)
+    # Score fields (0-10 each, decimals allowed)
+    quran = Column(Float, default=0)
+    duas = Column(Float, default=0)
+    taraweeh = Column(Float, default=0)
+    tahajjud = Column(Float, default=0)
+    duha = Column(Float, default=0)
+    rawatib = Column(Float, default=0)
+    main_lesson = Column(Float, default=0)
+    required_lesson = Column(Float, default=0)
+    enrichment_lesson = Column(Float, default=0)
+    charity_worship = Column(Float, default=0)
+    extra_work = Column(Float, default=0)
     extra_work_description = Column(Text, nullable=True)
 
     # Timestamps

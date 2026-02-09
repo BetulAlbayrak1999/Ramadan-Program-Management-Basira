@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import api from '../utils/api';
 import toast from 'react-hot-toast';
+import { BarChart3, Users, Clock, CircleDot, Search, FileDown } from 'lucide-react';
 
 export default function AdminAnalyticsPage() {
   const [data, setData] = useState({ results: [], summary: {} });
@@ -8,7 +9,9 @@ export default function AdminAnalyticsPage() {
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState({
     gender: '', halqa_id: '', member: '', supervisor: '',
-    min_pct: '', max_pct: '', period: 'all', sort_by: 'score', sort_order: 'desc',
+    min_pct: '', max_pct: '', period: 'all',
+    date_from: '', date_to: '',
+    sort_by: 'score', sort_order: 'desc',
   });
 
   useEffect(() => {
@@ -33,42 +36,47 @@ export default function AdminAnalyticsPage() {
       Object.entries(filters).forEach(([k, v]) => { if (v) params.append(k, v); });
       params.append('format', format);
       const res = await api.get(`/admin/export?${params.toString()}`, {
-        responseType: format === 'xlsx' ? 'blob' : 'text',
+        responseType: 'blob',
       });
-      const blob = format === 'xlsx' ? res.data : new Blob([res.data], { type: 'text/csv;charset=utf-8' });
+      const blob = new Blob([res.data], {
+        type: format === 'xlsx'
+          ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+          : 'text/csv;charset=utf-8-sig',
+      });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
       a.download = `ramadan_results.${format}`;
       a.click();
+      URL.revokeObjectURL(url);
       toast.success('تم التصدير بنجاح');
     } catch { toast.error('خطأ في التصدير'); }
   };
 
   return (
     <div>
-      <h1 className="page-title">📈 التحليلات والنقاط</h1>
+      <h1 className="page-title"><BarChart3 size={22} /> التحليلات والنقاط</h1>
       <p className="page-subtitle">داشبورد النقاط والتحليلات المتقدمة</p>
 
       {/* Summary Stats */}
       <div className="stats-grid">
         <div className="stat-card">
-          <div className="stat-icon">👥</div>
+          <div className="stat-icon"><Users size={20} /></div>
           <div className="stat-value">{data.summary.total_active || 0}</div>
           <div className="stat-label">مشاركون نشطون</div>
         </div>
         <div className="stat-card">
-          <div className="stat-icon">⏳</div>
+          <div className="stat-icon"><Clock size={20} /></div>
           <div className="stat-value gold">{data.summary.total_pending || 0}</div>
           <div className="stat-label">طلبات معلقة</div>
         </div>
         <div className="stat-card">
-          <div className="stat-icon">🔵</div>
+          <div className="stat-icon"><CircleDot size={20} /></div>
           <div className="stat-value">{data.summary.total_halqas || 0}</div>
           <div className="stat-label">عدد الحلقات</div>
         </div>
         <div className="stat-card">
-          <div className="stat-icon">🔍</div>
+          <div className="stat-icon"><Search size={20} /></div>
           <div className="stat-value gold">{data.summary.filtered_count || 0}</div>
           <div className="stat-label">نتائج الفلترة</div>
         </div>
@@ -76,11 +84,34 @@ export default function AdminAnalyticsPage() {
 
       {/* Filters */}
       <div className="filters-bar">
-        <select className="filter-input" value={filters.period} onChange={(e) => updateFilter('period', e.target.value)}>
+        <select className="filter-input" value={filters.period} onChange={(e) => {
+          if (e.target.value !== 'custom') {
+            setFilters((f) => ({ ...f, period: e.target.value, date_from: '', date_to: '' }));
+          } else {
+            updateFilter('period', 'custom');
+          }
+        }}>
           <option value="all">كل الفترة</option>
           <option value="weekly">أسبوعي</option>
           <option value="monthly">شهري</option>
+          <option value="custom">نطاق مخصص</option>
         </select>
+
+        {filters.period === 'custom' && (
+          <>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+              <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>من</label>
+              <input type="date" className="filter-input" value={filters.date_from}
+                onChange={(e) => updateFilter('date_from', e.target.value)} dir="ltr" />
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+              <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>إلى</label>
+              <input type="date" className="filter-input" value={filters.date_to}
+                onChange={(e) => updateFilter('date_to', e.target.value)} dir="ltr" />
+            </div>
+          </>
+        )}
+
         <select className="filter-input" value={filters.gender} onChange={(e) => updateFilter('gender', e.target.value)}>
           <option value="">كل الجنسين</option>
           <option value="male">ذكر</option>
@@ -110,15 +141,22 @@ export default function AdminAnalyticsPage() {
 
       {/* Export */}
       <div className="btn-group mb-2">
-        <button className="btn btn-gold btn-sm" onClick={() => exportData('xlsx')}>📥 تصدير XLSX</button>
-        <button className="btn btn-secondary btn-sm" onClick={() => exportData('csv')}>📥 تصدير CSV</button>
+        <button className="btn btn-gold btn-sm" onClick={() => exportData('xlsx')}>
+          <FileDown size={14} /> تصدير XLSX
+        </button>
+        <button className="btn btn-secondary btn-sm" onClick={() => exportData('csv')}>
+          <FileDown size={14} /> تصدير CSV
+        </button>
       </div>
 
       {/* Results Table */}
       {loading ? (
         <div className="loading"><div className="spinner" /></div>
       ) : data.results.length === 0 ? (
-        <div className="empty-state"><div className="empty-state-icon">📊</div><div className="empty-state-text">لا توجد نتائج</div></div>
+        <div className="empty-state">
+          <div className="empty-state-icon"><BarChart3 size={48} /></div>
+          <div className="empty-state-text">لا توجد نتائج</div>
+        </div>
       ) : (
         <div className="card">
           <div className="table-container">

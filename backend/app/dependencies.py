@@ -25,7 +25,7 @@ def get_current_user(
     except JWTError:
         raise HTTPException(status_code=401, detail="التوكن غير صالح أو منتهي الصلاحية")
 
-    user = db.get(User, user_id)
+    user = db.get(User, int(user_id))
     if not user:
         raise HTTPException(status_code=404, detail="المستخدم غير موجود")
     return user
@@ -55,5 +55,5 @@ class RoleChecker:
 def create_access_token(user_id: int) -> str:
     """Create a JWT access token."""
     expire = datetime.now(timezone.utc) + timedelta(seconds=settings.JWT_ACCESS_TOKEN_EXPIRES)
-    payload = {"sub": user_id, "exp": expire}
+    payload = {"sub": str(user_id), "exp": expire}
     return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)

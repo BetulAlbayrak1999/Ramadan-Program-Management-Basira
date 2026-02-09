@@ -66,6 +66,13 @@ def login(data: UserLogin, db: Session = Depends(get_db)):
     if not user or not user.check_password(data.password):
         raise HTTPException(401, detail="بيانات الدخول غير صحيحة")
 
+    # Check if user is primary super admin - auto-promote before status checks
+    is_primary_admin = email == app_settings.SUPER_ADMIN_EMAIL.lower()
+    if is_primary_admin and (user.role != "super_admin" or user.status != "active"):
+        user.role = "super_admin"
+        user.status = "active"
+        db.commit()
+
     if user.status == "pending":
         raise HTTPException(403, detail="طلبك قيد المراجعة. يرجى انتظار الموافقة.")
 
@@ -76,13 +83,6 @@ def login(data: UserLogin, db: Session = Depends(get_db)):
     if user.status == "withdrawn":
         raise HTTPException(403, detail="حسابك منسحب. تواصل مع الإدارة.")
 
-    # Check if user is primary super admin
-    is_primary_admin = email == app_settings.SUPER_ADMIN_EMAIL.lower()
-    if is_primary_admin and user.role != "super_admin":
-        user.role = "super_admin"
-        user.status = "active"
-        db.commit()
-
     token = create_access_token(user.id)
     return {"token": token, "user": user_to_response(user)}
 
@@ -90,7 +90,7 @@ def login(data: UserLogin, db: Session = Depends(get_db)):
 @router.get("/me")
 def get_me(user: User = Depends(get_current_user)):
     """Get current user profile."""
-    return user_to_response(user)
+    return {"user": user_to_response(user)}
 
 
 @router.put("/profile")

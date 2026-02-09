@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import api from '../utils/api';
 import toast from 'react-hot-toast';
+import * as XLSX from 'xlsx';
+import Pagination, { paginate } from '../components/Pagination';
 
 export default function AdminUsersPage() {
   const [tab, setTab] = useState('pending');
@@ -14,6 +16,10 @@ export default function AdminUsersPage() {
   const [rejectNote, setRejectNote] = useState('');
   const [showRejectModal, setShowRejectModal] = useState(null);
   const [importFile, setImportFile] = useState(null);
+  const [importPreview, setImportPreview] = useState(null);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState(null);
+  const [page, setPage] = useState(1);
 
   const fetchUsers = useCallback(async () => {
     setLoading(true);
@@ -24,6 +30,7 @@ export default function AdminUsersPage() {
       if (search) params.append('search', search);
       const res = await api.get(`/admin/users?${params.toString()}`);
       setUsers(res.data.users);
+      setPage(1);
     } catch { toast.error('خطأ في تحميل البيانات'); }
     finally { setLoading(false); }
   }, [tab, search]);
@@ -99,17 +106,54 @@ export default function AdminUsersPage() {
     fetchUsers();
   };
 
-  const handleImport = async () => {
+  const handleFileSelect = (file) => {
+    if (!file) return;
+    setImportFile(file);
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const wb = XLSX.read(e.target.result, { type: 'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+        const validRows = rows.filter((r) => {
+          const name = String(r['الاسم'] || '').trim();
+          const email = String(r['البريد'] || '').trim();
+          return name && email;
+        });
+        if (!validRows.length) { toast.error('الملف فارغ أو لا يحتوي بيانات صالحة'); setImportFile(null); return; }
+        const genderCount = { male: 0, female: 0 };
+        validRows.forEach((r) => {
+          const g = String(r['الجنس'] || '').trim().toLowerCase();
+          if (g === 'ذكر' || g === 'male') genderCount.male++;
+          else if (g === 'أنثى' || g === 'female') genderCount.female++;
+        });
+        setImportPreview({ rows: validRows, genderCount });
+      } catch { toast.error('خطأ في قراءة الملف'); setImportFile(null); }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  const confirmImport = async () => {
     if (!importFile) return;
+    setImporting(true);
     const formData = new FormData();
     formData.append('file', importFile);
     try {
       const res = await api.post('/admin/import', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
       toast.success(res.data.message);
-      if (res.data.errors?.length) toast.error(`أخطاء: ${res.data.errors.length}`);
       setImportFile(null);
+      setImportPreview(null);
+      if (res.data.errors?.length) {
+        setImportResult(res.data);
+      }
       fetchUsers();
-    } catch (err) { toast.error(err.response?.data?.error || 'خطأ'); }
+    } catch (err) { toast.error(err.response?.data?.detail || 'خطأ'); }
+    finally { setImporting(false); }
+  };
+
+  const cancelImport = () => {
+    setImportFile(null);
+    setImportPreview(null);
   };
 
   const downloadTemplate = async () => {
@@ -121,6 +165,8 @@ export default function AdminUsersPage() {
   const statusLabel = { active: 'نشط', pending: 'قيد المراجعة', rejected: 'مرفوض', withdrawn: 'منسحب' };
   const statusBadge = { active: 'badge-success', pending: 'badge-warning', rejected: 'badge-danger', withdrawn: 'badge-info' };
   const roleLabel = { participant: 'مشارك', supervisor: 'مشرف', super_admin: 'سوبر آدمن' };
+
+  const { paged, totalPages, total } = paginate(users, page);
 
   return (
     <div>
@@ -141,9 +187,9 @@ export default function AdminUsersPage() {
         <button className="btn btn-secondary btn-sm" onClick={downloadTemplate}>📥 قالب الاستيراد</button>
         <label className="btn btn-gold btn-sm" style={{ cursor: 'pointer' }}>
           📤 استيراد Excel
-          <input type="file" accept=".xlsx" style={{ display: 'none' }} onChange={(e) => setImportFile(e.target.files[0])} />
+          <input type="file" accept=".xlsx" style={{ display: 'none' }}
+            onChange={(e) => { handleFileSelect(e.target.files[0]); e.target.value = ''; }} />
         </label>
-        {importFile && <button className="btn btn-primary btn-sm" onClick={handleImport}>تأكيد الاستيراد</button>}
       </div>
 
       {loading ? (
@@ -161,7 +207,7 @@ export default function AdminUsersPage() {
                 </tr>
               </thead>
               <tbody>
-                {users.map((u) => (
+                {paged.map((u) => (
                   <tr key={u.id}>
                     <td style={{ fontWeight: 600 }}>{u.full_name}</td>
                     <td dir="ltr" style={{ fontSize: '0.75rem' }}>{u.email}</td>
@@ -204,6 +250,7 @@ export default function AdminUsersPage() {
               </tbody>
             </table>
           </div>
+          <Pagination page={page} totalPages={totalPages} total={total} onPageChange={setPage} />
         </div>
       )}
 
@@ -275,6 +322,90 @@ export default function AdminUsersPage() {
             <div className="btn-group mt-2">
               <button className="btn btn-primary" onClick={saveUserEdit}>💾 حفظ التعديلات</button>
               <button className="btn btn-secondary" onClick={() => setSelectedUser(null)}>إلغاء</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Import Preview Modal */}
+      {importPreview && (
+        <div className="modal-overlay" onClick={cancelImport}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 700 }}>
+            <div className="modal-title">معاينة ملف الاستيراد</div>
+
+            <div className="stats-grid" style={{ marginBottom: '1rem' }}>
+              <div className="stat-card">
+                <div className="stat-value">{importPreview.rows.length}</div>
+                <div className="stat-label">إجمالي المشاركين</div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-value">{importPreview.genderCount.male}</div>
+                <div className="stat-label">ذكور</div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-value">{importPreview.genderCount.female}</div>
+                <div className="stat-label">إناث</div>
+              </div>
+            </div>
+
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
+              سيتم إضافة المشاركين في قائمة "قيد المراجعة" بكلمة مرور افتراضية (123456)
+            </p>
+
+            <div className="table-container" style={{ maxHeight: 300, overflowY: 'auto' }}>
+              <table>
+                <thead>
+                  <tr>
+                    <th>#</th><th>الاسم</th><th>البريد</th><th>الجنس</th><th>الهاتف</th><th>الدولة</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {importPreview.rows.map((r, i) => (
+                    <tr key={i}>
+                      <td>{i + 1}</td>
+                      <td>{r['الاسم'] || '-'}</td>
+                      <td dir="ltr" style={{ fontSize: '0.75rem' }}>{r['البريد'] || '-'}</td>
+                      <td>{r['الجنس'] || '-'}</td>
+                      <td dir="ltr">{r['الهاتف'] || '-'}</td>
+                      <td>{r['الدولة'] || '-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="btn-group mt-2">
+              <button className="btn btn-primary" onClick={confirmImport} disabled={importing}>
+                {importing ? 'جاري الاستيراد...' : `تأكيد استيراد ${importPreview.rows.length} مشارك`}
+              </button>
+              <button className="btn btn-secondary" onClick={cancelImport} disabled={importing}>إلغاء</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Import Result Modal (errors) */}
+      {importResult && (
+        <div className="modal-overlay" onClick={() => setImportResult(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 500 }}>
+            <div className="modal-title">نتيجة الاستيراد</div>
+            <p style={{ fontWeight: 600, color: 'var(--accent)', marginBottom: '0.5rem' }}>{importResult.message}</p>
+            {importResult.errors?.length > 0 && (
+              <>
+                <p style={{ fontSize: '0.85rem', color: 'var(--danger)', fontWeight: 600, marginBottom: '0.5rem' }}>
+                  أخطاء ({importResult.errors.length}):
+                </p>
+                <div style={{ maxHeight: 200, overflowY: 'auto', background: 'var(--background)', borderRadius: 8, padding: '0.5rem' }}>
+                  {importResult.errors.map((err, i) => (
+                    <div key={i} style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', padding: '0.2rem 0', borderBottom: '1px solid var(--border)' }}>
+                      {err}
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+            <div className="btn-group mt-2">
+              <button className="btn btn-primary" onClick={() => setImportResult(null)}>حسناً</button>
             </div>
           </div>
         </div>
