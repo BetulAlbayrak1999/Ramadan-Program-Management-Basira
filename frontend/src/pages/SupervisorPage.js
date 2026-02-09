@@ -7,6 +7,7 @@ import {
   BookOpen, Heart, Building2, Moon, Sun, Gem,
   Headphones, BookMarked, Lightbulb, HeartHandshake, Star, X, Filter,
 } from 'lucide-react';
+import Pagination, { paginate } from '../components/Pagination';
 
 const SCORE_FIELDS = [
   { key: 'quran', label: 'وِرد القرآن', icon: <BookOpen size={14} /> },
@@ -37,6 +38,10 @@ export default function SupervisorPage() {
   const [memberCards, setMemberCards] = useState([]);
   const [targetDate, setTargetDate] = useState(new Date().toISOString().split('T')[0]);
   const [loading, setLoading] = useState(true);
+  const [pageSubmitted, setPageSubmitted] = useState(1);
+  const [pageNotSubmitted, setPageNotSubmitted] = useState(1);
+  const [pageWeekly, setPageWeekly] = useState(1);
+  const [pageLeaderboard, setPageLeaderboard] = useState(1);
 
   // Card detail/edit state
   const [cardMember, setCardMember] = useState(null);
@@ -61,17 +66,17 @@ export default function SupervisorPage() {
     setLoading(true);
     if (tab === 'daily') {
       api.get(`/supervisor/daily-summary?date=${targetDate}${halqaParam}`)
-        .then((res) => { setDailySummary(res.data); setHalqa(res.data.halqa); })
+        .then((res) => { setDailySummary(res.data); setHalqa(res.data.halqa); setPageSubmitted(1); setPageNotSubmitted(1); })
         .catch((err) => toast.error(err.response?.data?.detail || 'خطأ'))
         .finally(() => setLoading(false));
     } else if (tab === 'weekly') {
       api.get(`/supervisor/weekly-summary?_=1${halqaParam}`)
-        .then((res) => { setWeeklySummary(res.data); setHalqa(res.data.halqa); })
+        .then((res) => { setWeeklySummary(res.data); setHalqa(res.data.halqa); setPageWeekly(1); })
         .catch((err) => toast.error(err.response?.data?.detail || 'خطأ'))
         .finally(() => setLoading(false));
     } else if (tab === 'leaderboard') {
       api.get(`/supervisor/leaderboard?_=1${halqaParam}`)
-        .then((res) => { setLeaderboard(res.data.leaderboard); setHalqa(res.data.halqa); })
+        .then((res) => { setLeaderboard(res.data.leaderboard); setHalqa(res.data.halqa); setPageLeaderboard(1); })
         .catch((err) => toast.error(err.response?.data?.detail || 'خطأ'))
         .finally(() => setLoading(false));
     }
@@ -212,7 +217,7 @@ export default function SupervisorPage() {
                     <tr><th>الاسم</th><th>المجموع</th><th>النسبة</th><th>التفاصيل</th></tr>
                   </thead>
                   <tbody>
-                    {dailySummary.submitted.map(({ member, card }) => (
+                    {paginate(dailySummary.submitted, pageSubmitted).paged.map(({ member, card }) => (
                       <tr key={member.id}>
                         <td>{member.full_name}</td>
                         <td>{card.total_score}</td>
@@ -227,6 +232,8 @@ export default function SupervisorPage() {
                   </tbody>
                 </table>
               </div>
+              <Pagination page={pageSubmitted} totalPages={paginate(dailySummary.submitted, pageSubmitted).totalPages}
+                total={dailySummary.submitted.length} onPageChange={setPageSubmitted} />
             </div>
           )}
 
@@ -237,7 +244,7 @@ export default function SupervisorPage() {
                 <table>
                   <thead><tr><th>الاسم</th><th>الهاتف</th><th>إجراء</th></tr></thead>
                   <tbody>
-                    {dailySummary.not_submitted.map((m) => (
+                    {paginate(dailySummary.not_submitted, pageNotSubmitted).paged.map((m) => (
                       <tr key={m.id}>
                         <td>{m.full_name}</td>
                         <td dir="ltr">{m.phone}</td>
@@ -251,6 +258,8 @@ export default function SupervisorPage() {
                   </tbody>
                 </table>
               </div>
+              <Pagination page={pageNotSubmitted} totalPages={paginate(dailySummary.not_submitted, pageNotSubmitted).totalPages}
+                total={dailySummary.not_submitted.length} onPageChange={setPageNotSubmitted} />
             </div>
           )}
         </div>
@@ -264,9 +273,9 @@ export default function SupervisorPage() {
               <table>
                 <thead><tr><th>#</th><th>الاسم</th><th>البطاقات</th><th>المجموع</th><th>النسبة</th><th>التفاصيل</th></tr></thead>
                 <tbody>
-                  {weeklySummary.summary.map((s, i) => (
+                  {paginate(weeklySummary.summary, pageWeekly).paged.map((s, i) => (
                     <tr key={s.member.id}>
-                      <td>{i + 1}</td>
+                      <td>{(pageWeekly - 1) * 10 + i + 1}</td>
                       <td>{s.member.full_name}</td>
                       <td>{s.cards_submitted}</td>
                       <td>{s.total_score}</td>
@@ -277,6 +286,8 @@ export default function SupervisorPage() {
                 </tbody>
               </table>
             </div>
+            <Pagination page={pageWeekly} totalPages={paginate(weeklySummary.summary, pageWeekly).totalPages}
+              total={weeklySummary.summary.length} onPageChange={setPageWeekly} />
           </div>
         </div>
       ) : tab === 'leaderboard' ? (
@@ -287,33 +298,37 @@ export default function SupervisorPage() {
               <div className="empty-state-text">لا توجد بيانات بعد</div>
             </div>
           ) : (
-            <div className="table-container">
-              <table>
-                <thead>
-                  <tr><th>#</th><th>الاسم</th><th>المجموع</th><th>البطاقات</th><th>النسبة</th></tr>
-                </thead>
-                <tbody>
-                  {leaderboard.map((r) => (
-                    <tr key={r.user_id}>
-                      <td style={{ fontWeight: 800, color: r.rank <= 3 ? 'var(--gold)' : 'var(--text-muted)' }}>
-                        {r.rank}
-                      </td>
-                      <td style={{ fontWeight: 600 }}>{r.full_name}</td>
-                      <td style={{ fontWeight: 700, color: 'var(--accent)' }}>{r.total_score}</td>
-                      <td>{r.cards_count}</td>
-                      <td>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                          <div className="progress-bar" style={{ width: 60, height: 6 }}>
-                            <div className="progress-fill green" style={{ width: `${r.percentage}%` }} />
+            <>
+              <div className="table-container">
+                <table>
+                  <thead>
+                    <tr><th>#</th><th>الاسم</th><th>المجموع</th><th>البطاقات</th><th>النسبة</th></tr>
+                  </thead>
+                  <tbody>
+                    {paginate(leaderboard, pageLeaderboard).paged.map((r) => (
+                      <tr key={r.user_id}>
+                        <td style={{ fontWeight: 800, color: r.rank <= 3 ? 'var(--gold)' : 'var(--text-muted)' }}>
+                          {r.rank}
+                        </td>
+                        <td style={{ fontWeight: 600 }}>{r.full_name}</td>
+                        <td style={{ fontWeight: 700, color: 'var(--accent)' }}>{r.total_score}</td>
+                        <td>{r.cards_count}</td>
+                        <td>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            <div className="progress-bar" style={{ width: 60, height: 6 }}>
+                              <div className="progress-fill green" style={{ width: `${r.percentage}%` }} />
+                            </div>
+                            <span style={{ fontWeight: 700, fontSize: '0.8rem' }}>{r.percentage}%</span>
                           </div>
-                          <span style={{ fontWeight: 700, fontSize: '0.8rem' }}>{r.percentage}%</span>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <Pagination page={pageLeaderboard} totalPages={paginate(leaderboard, pageLeaderboard).totalPages}
+                total={leaderboard.length} onPageChange={setPageLeaderboard} />
+            </>
           )}
         </div>
       ) : null}

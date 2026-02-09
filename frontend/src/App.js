@@ -15,6 +15,7 @@ import AdminUsersPage from './pages/AdminUsersPage';
 import AdminHalqasPage from './pages/AdminHalqasPage';
 import AdminAnalyticsPage from './pages/AdminAnalyticsPage';
 import AdminSettingsPage from './pages/AdminSettingsPage';
+import HomePage from './pages/HomePage';
 import './styles/global.css';
 
 function ProtectedRoute({ children, roles }) {
@@ -35,38 +36,38 @@ function PublicRoute({ children }) {
 function AppRoutes() {
   return (
     <Routes>
+      <Route path="/" element={<PublicRoute><HomePage /></PublicRoute>} />
       <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
       <Route path="/register" element={<PublicRoute><RegisterPage /></PublicRoute>} />
       <Route path="/forgot-password" element={<PublicRoute><ForgotPasswordPage /></PublicRoute>} />
 
-      <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
-        <Route index element={<Navigate to="/dashboard" />} />
-        <Route path="dashboard" element={<DashboardPage />} />
-        <Route path="daily-card" element={<DailyCardPage />} />
-        <Route path="leaderboard" element={
+      <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>
+        <Route path="/dashboard" element={<DashboardPage />} />
+        <Route path="/daily-card" element={<DailyCardPage />} />
+        <Route path="/leaderboard" element={
           <ProtectedRoute roles={['supervisor', 'super_admin']}><LeaderboardPage /></ProtectedRoute>
         } />
-        <Route path="profile" element={<ProfilePage />} />
+        <Route path="/profile" element={<ProfilePage />} />
 
-        <Route path="supervisor" element={
+        <Route path="/supervisor" element={
           <ProtectedRoute roles={['supervisor', 'super_admin']}><SupervisorPage /></ProtectedRoute>
         } />
 
-        <Route path="admin/users" element={
+        <Route path="/admin/users" element={
           <ProtectedRoute roles={['super_admin']}><AdminUsersPage /></ProtectedRoute>
         } />
-        <Route path="admin/halqas" element={
+        <Route path="/admin/halqas" element={
           <ProtectedRoute roles={['super_admin']}><AdminHalqasPage /></ProtectedRoute>
         } />
-        <Route path="admin/analytics" element={
+        <Route path="/admin/analytics" element={
           <ProtectedRoute roles={['super_admin']}><AdminAnalyticsPage /></ProtectedRoute>
         } />
-        <Route path="admin/settings" element={
+        <Route path="/admin/settings" element={
           <ProtectedRoute roles={['super_admin']}><AdminSettingsPage /></ProtectedRoute>
         } />
       </Route>
 
-      <Route path="*" element={<Navigate to="/dashboard" />} />
+      <Route path="*" element={<Navigate to="/" />} />
     </Routes>
   );
 }

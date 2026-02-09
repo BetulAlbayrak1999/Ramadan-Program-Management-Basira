@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Trophy, Medal, Filter } from 'lucide-react';
 import api from '../utils/api';
 import { useAuth } from '../context/AuthContext';
+import Pagination, { paginate } from '../components/Pagination';
 
 export default function LeaderboardPage() {
   const { user } = useAuth();
@@ -11,6 +12,7 @@ export default function LeaderboardPage() {
   const [halqas, setHalqas] = useState([]);
   const [selectedHalqaId, setSelectedHalqaId] = useState('');
   const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(1);
 
   useEffect(() => {
     if (isSuperAdmin) {
@@ -27,6 +29,7 @@ export default function LeaderboardPage() {
       .then((res) => {
         setData(res.data.leaderboard);
         setHalqa(res.data.halqa);
+        setPage(1);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -73,7 +76,7 @@ export default function LeaderboardPage() {
                 </tr>
               </thead>
               <tbody>
-                {data.map((r) => (
+                {paginate(data, page).paged.map((r) => (
                   <tr key={r.user_id} style={r.user_id === user?.id ? { background: 'var(--primary-light)' } : {}}>
                     <td style={{ fontWeight: 800, color: r.rank <= 3 ? 'var(--gold)' : 'var(--text-muted)' }}>
                       {r.rank <= 3 ? <Medal size={16} style={{ color: 'var(--gold)', verticalAlign: 'middle' }} /> : r.rank}
@@ -94,6 +97,8 @@ export default function LeaderboardPage() {
               </tbody>
             </table>
           </div>
+          <Pagination page={page} totalPages={paginate(data, page).totalPages}
+            total={data.length} onPageChange={setPage} />
         </div>
       )}
     </div>

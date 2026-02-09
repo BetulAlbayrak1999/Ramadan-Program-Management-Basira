@@ -2,11 +2,14 @@ import { useState, useEffect } from 'react';
 import api from '../utils/api';
 import toast from 'react-hot-toast';
 import { BarChart3, Users, Clock, CircleDot, Search, FileDown } from 'lucide-react';
+import Pagination, { paginate } from '../components/Pagination';
 
 export default function AdminAnalyticsPage() {
   const [data, setData] = useState({ results: [], summary: {} });
   const [halqas, setHalqas] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  const [page, setPage] = useState(1);
   const [filters, setFilters] = useState({
     gender: '', halqa_id: '', member: '', supervisor: '',
     min_pct: '', max_pct: '', period: 'all',
@@ -23,7 +26,7 @@ export default function AdminAnalyticsPage() {
     const params = new URLSearchParams();
     Object.entries(filters).forEach(([k, v]) => { if (v) params.append(k, v); });
     api.get(`/admin/analytics?${params.toString()}`)
-      .then((res) => setData(res.data))
+      .then((res) => { setData(res.data); setPage(1); })
       .catch(() => toast.error('خطأ'))
       .finally(() => setLoading(false));
   }, [filters]);
@@ -168,11 +171,11 @@ export default function AdminAnalyticsPage() {
                 </tr>
               </thead>
               <tbody>
-                {data.results.map((r) => (
+                {paginate(data.results, page).paged.map((r) => (
                   <tr key={r.user_id}>
                     <td style={{ fontWeight: 700, color: r.rank <= 3 ? 'var(--gold)' : 'var(--text-muted)' }}>{r.rank}</td>
                     <td style={{ fontWeight: 600 }}>{r.full_name}</td>
-                    <td>{r.gender === 'male' ? 'ذكر' : 'أنثى'}</td>
+                    <td>{['male', 'ذكر'].includes(r.gender) ? 'ذكر' : 'أنثى'}</td>
                     <td>{r.halqa_name}</td>
                     <td>{r.supervisor_name}</td>
                     <td style={{ fontWeight: 700, color: 'var(--accent)' }}>{r.total_score}</td>
@@ -191,6 +194,8 @@ export default function AdminAnalyticsPage() {
               </tbody>
             </table>
           </div>
+          <Pagination page={page} totalPages={paginate(data.results, page).totalPages}
+            total={data.results.length} onPageChange={setPage} />
         </div>
       )}
     </div>
