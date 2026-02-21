@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { KeyRound } from 'lucide-react';
+import { KeyRound, Eye, EyeOff } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import api from '../utils/api';
 import toast from 'react-hot-toast';
@@ -9,6 +9,7 @@ export default function ForgotPasswordPage() {
   const [email, setEmail] = useState('');
   const [token, setToken] = useState('');
   const [newPassword, setNewPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const requestReset = async (e) => {
@@ -19,7 +20,11 @@ export default function ForgotPasswordPage() {
       toast.success('تم إرسال رمز إعادة التعيين إلى بريدك');
       setStep(2);
     } catch (err) {
-      toast.error('حدث خطأ');
+      if (err.response?.status === 404) {
+        toast.error('هذا البريد الإلكتروني غير مسجل في النظام');
+      } else {
+        toast.error('حدث خطأ');
+      }
     } finally {
       setLoading(false);
     }
@@ -33,11 +38,23 @@ export default function ForgotPasswordPage() {
       toast.success('تم إعادة تعيين كلمة المرور بنجاح');
       setStep(3);
     } catch (err) {
-      toast.error(err.response?.data?.error || 'حدث خطأ');
+      const detail = err.response?.data?.detail;
+      toast.error(typeof detail === 'string' ? detail : 'حدث خطأ');
     } finally {
       setLoading(false);
     }
   };
+
+  const passwordToggleBtn = (
+    <button type="button" onClick={() => setShowPassword((v) => !v)}
+      style={{
+        position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)',
+        background: 'none', border: 'none', cursor: 'pointer',
+        color: 'var(--text-muted)', padding: 0, display: 'flex', alignItems: 'center',
+      }}>
+      {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+    </button>
+  );
 
   return (
     <div className="auth-page">
@@ -68,8 +85,12 @@ export default function ForgotPasswordPage() {
             </div>
             <div className="form-group">
               <label className="form-label">كلمة المرور الجديدة</label>
-              <input type="password" className="form-input" value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)} required dir="ltr" minLength={6} />
+              <div style={{ position: 'relative' }}>
+                <input type={showPassword ? 'text' : 'password'} className="form-input" value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)} required dir="ltr" minLength={6}
+                  style={{ paddingLeft: 40 }} />
+                {passwordToggleBtn}
+              </div>
             </div>
             <button type="submit" className="btn btn-primary btn-full" disabled={loading}>
               {loading ? 'جاري التعيين...' : 'تعيين كلمة المرور'}

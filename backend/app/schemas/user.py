@@ -79,6 +79,7 @@ def user_to_response(user) -> dict:
     """Build user response dict matching the frontend expected format."""
     data = {
         "id": user.id,
+        "member_id": user.member_id,
         "full_name": user.full_name,
         "gender": user.gender,
         "age": user.age,

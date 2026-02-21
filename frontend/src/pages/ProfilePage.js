@@ -88,6 +88,7 @@ export default function ProfilePage() {
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
             {[
+              ['رقم العضوية', user?.member_id],
               ['الاسم', user?.full_name],
               ['البريد', user?.email],
               ['الهاتف', user?.phone],

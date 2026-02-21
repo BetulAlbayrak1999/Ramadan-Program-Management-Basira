@@ -1,12 +1,12 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import api from '../utils/api';
 import toast from 'react-hot-toast';
 import { useAuth } from '../context/AuthContext';
 import {
-  Eye, CheckCircle, XCircle, ClipboardList, Trophy, Save, Users,
+  Eye, ClipboardList, Trophy, Save, Users,
   BookOpen, Heart, Building2, Moon, Sun, Gem, User,
   Headphones, BookMarked, Lightbulb, HeartHandshake, Star, X, Filter,
-  Phone, Mail, MapPin, Calendar,
+  Phone, Mail, MapPin, Calendar, FileDown, Search, Plus, Trash2,
 } from 'lucide-react';
 import Pagination, { paginate } from '../components/Pagination';
 
@@ -61,6 +61,13 @@ export default function SupervisorPage() {
   // Card history modal
   const [selectedMember, setSelectedMember] = useState(null);
   const [memberCards, setMemberCards] = useState([]);
+
+  // Search filters
+  const [searchName, setSearchName] = useState('');
+  const [searchGender, setSearchGender] = useState('');
+
+  // Add card for member
+  const [addCardDate, setAddCardDate] = useState('');
 
   // Card detail/edit state
   const [cardMember, setCardMember] = useState(null);
@@ -144,6 +151,7 @@ export default function SupervisorPage() {
       setCardDetail(res.data.card);
       setEditData({ ...res.data.card });
       setEditMode(false);
+      refreshCurrentTab();
     } catch (err) {
       toast.error(err.response?.data?.error || 'خطأ في حفظ البطاقة');
     } finally {
@@ -157,6 +165,35 @@ export default function SupervisorPage() {
     setEditMode(false);
   };
 
+  const refreshCurrentTab = useCallback(() => {
+    if (tab === 'summary') {
+      api.get(`/supervisor/range-summary?date_from=${dateRange.from}&date_to=${dateRange.to}${halqaParam}`)
+        .then((res) => { setRangeSummary(res.data); setHalqa(res.data.halqa); })
+        .catch(() => {});
+    } else if (tab === 'members') {
+      api.get(`/supervisor/members?_=1${halqaParam}`)
+        .then((res) => { setMembers(res.data.members); setHalqa(res.data.halqa); })
+        .catch(() => {});
+    } else if (tab === 'leaderboard') {
+      api.get(`/supervisor/leaderboard?_=1${halqaParam}`)
+        .then((res) => { setLeaderboard(res.data.leaderboard); setHalqa(res.data.halqa); })
+        .catch(() => {});
+    }
+  }, [tab, dateRange, halqaParam]);
+
+  const handleDeleteCard = async () => {
+    if (!cardMember || !cardDate) return;
+    if (!window.confirm('هل أنت متأكد من حذف هذه البطاقة؟')) return;
+    try {
+      const res = await api.delete(`/supervisor/member/${cardMember.id}/card/${cardDate}`);
+      toast.success(res.data.message);
+      closeCardDetail();
+      refreshCurrentTab();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'خطأ في حذف البطاقة');
+    }
+  };
+
   const setScore = (field, value) => {
     const num = parseFloat(value);
     if (value === '' || value === '-') {
@@ -166,6 +203,43 @@ export default function SupervisorPage() {
     if (!isNaN(num) && num >= 0 && num <= 10) {
       setEditData((d) => ({ ...d, [field]: num }));
     }
+  };
+
+  // Client-side filtering helper
+  const applyFilters = (item) => {
+    const name = item.member?.full_name || item.full_name || '';
+    const gender = item.member?.gender || item.gender || '';
+    if (searchName && !name.includes(searchName)) return false;
+    if (searchGender) {
+      const normalizedGender = ['male', 'ذكر'].includes(gender) ? 'male' : 'female';
+      if (normalizedGender !== searchGender) return false;
+    }
+    return true;
+  };
+
+  const exportReport = async (format) => {
+    try {
+      const params = new URLSearchParams();
+      params.append('format', format);
+      if (dateRange.from) params.append('date_from', dateRange.from);
+      if (dateRange.to) params.append('date_to', dateRange.to);
+      if (selectedHalqaId) params.append('halqa_id', selectedHalqaId);
+      if (searchName) params.append('search_name', searchName);
+      if (searchGender) params.append('search_gender', searchGender);
+      const res = await api.get(`/supervisor/export?${params.toString()}`, { responseType: 'blob' });
+      const blob = new Blob([res.data], {
+        type: format === 'xlsx'
+          ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+          : 'text/csv;charset=utf-8-sig',
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `daily_cards_report.${format}`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success('تم التصدير بنجاح');
+    } catch { toast.error('خطأ في التصدير'); }
   };
 
   return (
@@ -187,6 +261,18 @@ export default function SupervisorPage() {
           </select>
         </div>
       )}
+
+      <div className="filters-bar mb-2">
+        <Search size={15} />
+        <input className="filter-input" placeholder="اسم المشارك" value={searchName}
+          onChange={(e) => setSearchName(e.target.value)} />
+        <select className="filter-input" value={searchGender}
+          onChange={(e) => setSearchGender(e.target.value)}>
+          <option value="">الجنس: الكل</option>
+          <option value="male">ذكر</option>
+          <option value="female">أنثى</option>
+        </select>
+      </div>
 
       <div className="tabs">
         <button className={`tab ${tab === 'summary' ? 'active' : ''}`} onClick={() => setTab('summary')}>
@@ -214,6 +300,14 @@ export default function SupervisorPage() {
               <input type="date" className="filter-input" value={dateRange.to}
                 onChange={(e) => setDateRange((d) => ({ ...d, to: e.target.value }))} dir="ltr" />
             </div>
+            <div style={{ display: 'flex', gap: '0.3rem', marginRight: 'auto' }}>
+              <button className="btn btn-secondary btn-sm" onClick={() => exportReport('xlsx')} title="تصدير XLSX">
+                <FileDown size={14} /> XLSX
+              </button>
+              <button className="btn btn-secondary btn-sm" onClick={() => exportReport('csv')} title="تصدير CSV">
+                <FileDown size={14} /> CSV
+              </button>
+            </div>
           </div>
 
           {loading ? (
@@ -233,50 +327,54 @@ export default function SupervisorPage() {
                 </div>
               </div>
 
-              {rangeSummary.summary.length === 0 ? (
-                <div className="empty-state">
-                  <div className="empty-state-icon"><ClipboardList size={48} /></div>
-                  <div className="empty-state-text">لا توجد بيانات</div>
-                </div>
-              ) : (
-                <div className="card">
-                  <div className="table-container">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>#</th><th>الاسم</th><th>البطاقات</th>
-                          <th>المجموع</th><th>النسبة</th><th>التفاصيل</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {paginate(rangeSummary.summary, pageSummary).paged.map((s, i) => (
-                          <tr key={s.member.id}>
-                            <td>{(pageSummary - 1) * 10 + i + 1}</td>
-                            <td style={{ fontWeight: 600 }}>{s.member.full_name}</td>
-                            <td>{s.cards_submitted} / {s.total_days}</td>
-                            <td style={{ fontWeight: 700, color: 'var(--accent)' }}>{s.total_score}</td>
-                            <td>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                <div className="progress-bar" style={{ width: 50, height: 6 }}>
-                                  <div className="progress-fill green" style={{ width: `${s.percentage}%` }} />
-                                </div>
-                                <span style={{ fontWeight: 700, fontSize: '0.8rem' }}>{s.percentage}%</span>
-                              </div>
-                            </td>
-                            <td>
-                              <button className="btn btn-secondary btn-sm" onClick={() => viewMemberCards(s.member.id)}>
-                                عرض
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+              {(() => {
+                const filtered = rangeSummary.summary.filter(applyFilters);
+                return filtered.length === 0 ? (
+                  <div className="empty-state">
+                    <div className="empty-state-icon"><ClipboardList size={48} /></div>
+                    <div className="empty-state-text">لا توجد بيانات</div>
                   </div>
-                  <Pagination page={pageSummary} totalPages={paginate(rangeSummary.summary, pageSummary).totalPages}
-                    total={rangeSummary.summary.length} onPageChange={setPageSummary} />
-                </div>
-              )}
+                ) : (
+                  <div className="card">
+                    <div className="table-container">
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>#</th><th>رقم العضوية</th><th>الاسم</th><th>البطاقات</th>
+                            <th>المجموع</th><th>النسبة</th><th>التفاصيل</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {paginate(filtered, pageSummary).paged.map((s, i) => (
+                            <tr key={s.member.id}>
+                              <td>{(pageSummary - 1) * 10 + i + 1}</td>
+                              <td style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{s.member.member_id}</td>
+                              <td style={{ fontWeight: 600 }}>{s.member.full_name}</td>
+                              <td>{s.cards_submitted} / {s.total_days}</td>
+                              <td style={{ fontWeight: 700, color: 'var(--accent)' }}>{s.total_score}</td>
+                              <td>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                  <div className="progress-bar" style={{ width: 50, height: 6 }}>
+                                    <div className="progress-fill green" style={{ width: `${s.percentage}%` }} />
+                                  </div>
+                                  <span style={{ fontWeight: 700, fontSize: '0.8rem' }}>{s.percentage}%</span>
+                                </div>
+                              </td>
+                              <td>
+                                <button className="btn btn-secondary btn-sm" onClick={() => viewMemberCards(s.member.id)}>
+                                  عرض
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <Pagination page={pageSummary} totalPages={paginate(filtered, pageSummary).totalPages}
+                      total={filtered.length} onPageChange={setPageSummary} />
+                  </div>
+                );
+              })()}
             </div>
           ) : null}
         </div>
@@ -286,93 +384,101 @@ export default function SupervisorPage() {
       {tab === 'members' && (
         loading ? (
           <div className="loading"><div className="spinner" /></div>
-        ) : members.length === 0 ? (
-          <div className="empty-state">
-            <div className="empty-state-icon"><Users size={48} /></div>
-            <div className="empty-state-text">لا يوجد مشاركون</div>
-          </div>
-        ) : (
-          <div className="card">
-            <div className="table-container">
-              <table>
-                <thead>
-                  <tr>
-                    <th>#</th><th>الاسم</th><th>الجنس</th><th>الهاتف</th>
-                    <th>البريد</th><th>الدولة</th><th>إجراء</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {paginate(members, pageMembers).paged.map((m, i) => (
-                    <tr key={m.id}>
-                      <td>{(pageMembers - 1) * 10 + i + 1}</td>
-                      <td style={{ fontWeight: 600 }}>{m.full_name}</td>
-                      <td>{['male', 'ذكر'].includes(m.gender) ? 'ذكر' : 'أنثى'}</td>
-                      <td dir="ltr" style={{ fontSize: '0.8rem' }}>{m.phone}</td>
-                      <td dir="ltr" style={{ fontSize: '0.8rem' }}>{m.email}</td>
-                      <td>{m.country}</td>
-                      <td>
-                        <div className="btn-group">
-                          <button className="btn btn-secondary btn-sm" onClick={() => setMemberDetail(m)}>
-                            <User size={13} />
-                          </button>
-                          <button className="btn btn-secondary btn-sm" onClick={() => viewMemberCards(m.id)}>
-                            <ClipboardList size={13} />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+        ) : (() => {
+          const filtered = members.filter(applyFilters);
+          return filtered.length === 0 ? (
+            <div className="empty-state">
+              <div className="empty-state-icon"><Users size={48} /></div>
+              <div className="empty-state-text">لا يوجد مشاركون</div>
             </div>
-            <Pagination page={pageMembers} totalPages={paginate(members, pageMembers).totalPages}
-              total={members.length} onPageChange={setPageMembers} />
-          </div>
-        )
+          ) : (
+            <div className="card">
+              <div className="table-container">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>#</th><th>رقم العضوية</th><th>الاسم</th><th>الجنس</th><th>الهاتف</th>
+                      <th>البريد</th><th>الدولة</th><th>إجراء</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {paginate(filtered, pageMembers).paged.map((m, i) => (
+                      <tr key={m.id}>
+                        <td>{(pageMembers - 1) * 10 + i + 1}</td>
+                        <td style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{m.member_id}</td>
+                        <td style={{ fontWeight: 600 }}>{m.full_name}</td>
+                        <td>{['male', 'ذكر'].includes(m.gender) ? 'ذكر' : 'أنثى'}</td>
+                        <td dir="ltr" style={{ fontSize: '0.8rem' }}>{m.phone}</td>
+                        <td dir="ltr" style={{ fontSize: '0.8rem' }}>{m.email}</td>
+                        <td>{m.country}</td>
+                        <td>
+                          <div className="btn-group">
+                            <button className="btn btn-secondary btn-sm" onClick={() => setMemberDetail(m)}>
+                              <User size={13} />
+                            </button>
+                            <button className="btn btn-secondary btn-sm" onClick={() => viewMemberCards(m.id)}>
+                              <ClipboardList size={13} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <Pagination page={pageMembers} totalPages={paginate(filtered, pageMembers).totalPages}
+                total={filtered.length} onPageChange={setPageMembers} />
+            </div>
+          );
+        })()
       )}
 
       {/* ─── Leaderboard Tab ─── */}
       {tab === 'leaderboard' && (
         loading ? (
           <div className="loading"><div className="spinner" /></div>
-        ) : leaderboard.length === 0 ? (
-          <div className="empty-state">
-            <div className="empty-state-icon"><Trophy size={48} /></div>
-            <div className="empty-state-text">لا توجد بيانات بعد</div>
-          </div>
-        ) : (
-          <div className="card">
-            <div className="table-container">
-              <table>
-                <thead>
-                  <tr><th>#</th><th>الاسم</th><th>المجموع</th><th>البطاقات</th><th>النسبة</th></tr>
-                </thead>
-                <tbody>
-                  {paginate(leaderboard, pageLeaderboard).paged.map((r) => (
-                    <tr key={r.user_id}>
-                      <td style={{ fontWeight: 800, color: r.rank <= 3 ? 'var(--gold)' : 'var(--text-muted)' }}>
-                        {r.rank}
-                      </td>
-                      <td style={{ fontWeight: 600 }}>{r.full_name}</td>
-                      <td style={{ fontWeight: 700, color: 'var(--accent)' }}>{r.total_score}</td>
-                      <td>{r.cards_count}</td>
-                      <td>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                          <div className="progress-bar" style={{ width: 60, height: 6 }}>
-                            <div className="progress-fill green" style={{ width: `${r.percentage}%` }} />
-                          </div>
-                          <span style={{ fontWeight: 700, fontSize: '0.8rem' }}>{r.percentage}%</span>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+        ) : (() => {
+          const filtered = leaderboard.filter(applyFilters);
+          return filtered.length === 0 ? (
+            <div className="empty-state">
+              <div className="empty-state-icon"><Trophy size={48} /></div>
+              <div className="empty-state-text">لا توجد بيانات بعد</div>
             </div>
-            <Pagination page={pageLeaderboard} totalPages={paginate(leaderboard, pageLeaderboard).totalPages}
-              total={leaderboard.length} onPageChange={setPageLeaderboard} />
-          </div>
-        )
+          ) : (
+            <div className="card">
+              <div className="table-container">
+                <table>
+                  <thead>
+                    <tr><th>#</th><th>رقم العضوية</th><th>الاسم</th><th>المجموع</th><th>البطاقات</th><th>النسبة</th></tr>
+                  </thead>
+                  <tbody>
+                    {paginate(filtered, pageLeaderboard).paged.map((r) => (
+                      <tr key={r.user_id}>
+                        <td style={{ fontWeight: 800, color: r.rank <= 3 ? 'var(--gold)' : 'var(--text-muted)' }}>
+                          {r.rank}
+                        </td>
+                        <td style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{r.member_id}</td>
+                        <td style={{ fontWeight: 600 }}>{r.full_name}</td>
+                        <td style={{ fontWeight: 700, color: 'var(--accent)' }}>{r.total_score}</td>
+                        <td>{r.cards_count}</td>
+                        <td>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            <div className="progress-bar" style={{ width: 60, height: 6 }}>
+                              <div className="progress-fill green" style={{ width: `${r.percentage}%` }} />
+                            </div>
+                            <span style={{ fontWeight: 700, fontSize: '0.8rem' }}>{r.percentage}%</span>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <Pagination page={pageLeaderboard} totalPages={paginate(filtered, pageLeaderboard).totalPages}
+                total={filtered.length} onPageChange={setPageLeaderboard} />
+            </div>
+          );
+        })()
       )}
 
       {/* ─── Member Detail Modal ─── */}
@@ -401,6 +507,9 @@ export default function SupervisorPage() {
               </div>
               <div style={{ fontWeight: 700, fontSize: '1.05rem', color: 'var(--text-primary)' }}>
                 {memberDetail.full_name}
+              </div>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>
+                رقم العضوية: {memberDetail.member_id}
               </div>
               <span className={`badge ${memberDetail.gender === 'male' || memberDetail.gender === 'ذكر' ? 'badge-info' : 'badge-warning'}`}
                 style={{ marginTop: '0.3rem' }}>
@@ -443,16 +552,33 @@ export default function SupervisorPage() {
 
       {/* ─── Member Cards History Modal ─── */}
       {selectedMember && (
-        <div className="modal-overlay" onClick={() => setSelectedMember(null)}>
+        <div className="modal-overlay" onClick={() => { setSelectedMember(null); setAddCardDate(''); }}>
           <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 700 }}>
             <div className="flex-between mb-2">
               <div className="modal-title" style={{ margin: 0 }}>
                 <ClipboardList size={18} /> بطاقات {selectedMember.full_name}
               </div>
-              <button className="btn btn-secondary btn-sm" onClick={() => setSelectedMember(null)}>
+              <button className="btn btn-secondary btn-sm" onClick={() => { setSelectedMember(null); setAddCardDate(''); }}>
                 <X size={16} />
               </button>
             </div>
+
+            {/* Add new card row */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+              <input type="date" className="filter-input" value={addCardDate}
+                onChange={(e) => setAddCardDate(e.target.value)} dir="ltr"
+                min="2026-02-19" max="2026-03-19"
+                style={{ flex: 1 }} />
+              <button className="btn btn-primary btn-sm" disabled={!addCardDate}
+                onClick={() => {
+                  setSelectedMember(null);
+                  openCardDetail(selectedMember.id, addCardDate);
+                  setAddCardDate('');
+                }}>
+                <Plus size={14} /> إضافة بطاقة
+              </button>
+            </div>
+
             {memberCards.length === 0 ? (
               <div className="empty-state"><div className="empty-state-text">لا توجد بطاقات</div></div>
             ) : (
@@ -563,10 +689,15 @@ export default function SupervisorPage() {
                     <div className="empty-state-text">لم يتم تسجيل بطاقة لهذا اليوم</div>
                   </div>
                 )}
-                <div className="mt-2">
+                <div className="btn-group mt-2">
                   <button className="btn btn-primary" onClick={() => setEditMode(true)}>
                     {cardDetail ? 'تعديل البطاقة' : 'إدخال بطاقة'}
                   </button>
+                  {cardDetail && (
+                    <button className="btn btn-secondary" style={{ color: 'var(--danger, #e53e3e)' }} onClick={handleDeleteCard}>
+                      <Trash2 size={14} /> حذف
+                    </button>
+                  )}
                 </div>
               </>
             )}

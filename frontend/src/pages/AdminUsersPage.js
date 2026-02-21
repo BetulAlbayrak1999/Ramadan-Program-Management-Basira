@@ -21,6 +21,11 @@ export default function AdminUsersPage() {
   const [importResult, setImportResult] = useState(null);
   const [page, setPage] = useState(1);
 
+  // Bulk selection
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [bulkHalqaId, setBulkHalqaId] = useState('');
+  const [confirmAction, setConfirmAction] = useState(null);
+
   const fetchUsers = useCallback(async () => {
     setLoading(true);
     try {
@@ -156,6 +161,179 @@ export default function AdminUsersPage() {
     setImportPreview(null);
   };
 
+  const { paged, totalPages, total } = paginate(users, page);
+
+  // Clear selection on tab change
+  useEffect(() => { setSelectedIds(new Set()); }, [tab]);
+
+  // Bulk selection helpers
+  const toggleSelect = (id) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === paged.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(paged.map((u) => u.id)));
+    }
+  };
+
+  const bulkAction = async (action, extra = {}) => {
+    const ids = Array.from(selectedIds);
+    if (!ids.length) { toast.error('اختر مشاركين أولاً'); return; }
+    try {
+      const res = await api.post(`/admin/bulk/${action}`, { user_ids: ids, ...extra });
+      toast.success(res.data.message);
+      setSelectedIds(new Set());
+      fetchUsers();
+    } catch (err) { toast.error(err.response?.data?.error || 'خطأ'); }
+  };
+
+  const exportUsers = async (format) => {
+    try {
+      const params = new URLSearchParams();
+      params.append('format', format);
+      const status = tab === 'all' ? '' : tab;
+      if (status) params.append('status', status);
+      if (search) params.append('search', search);
+      const res = await api.get(`/admin/export-users?${params.toString()}`, { responseType: 'blob' });
+      const blob = new Blob([res.data], {
+        type: format === 'xlsx'
+          ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+          : 'text/csv;charset=utf-8-sig',
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `users_report.${format}`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success('تم التصدير بنجاح');
+    } catch { toast.error('خطأ في التصدير'); }
+  };
+
+  // ── Confirmation wrappers ──────────────────────────────────────────────────
+
+  const confirmApprove = (user) => {
+    setConfirmAction({
+      title: 'قبول طلب التسجيل',
+      message: `هل تريد قبول طلب تسجيل "${user.full_name}"؟`,
+      details: 'سيتم تغيير حالة المشارك من "قيد المراجعة" إلى "نشط".',
+      onConfirm: () => approve(user.id),
+    });
+  };
+
+  const confirmWithdraw = (user) => {
+    setConfirmAction({
+      title: 'سحب المشارك',
+      message: `هل تريد سحب المشارك "${user.full_name}"؟`,
+      details: 'سيتم تغيير حالة المشارك من "نشط" إلى "منسحب".',
+      onConfirm: () => withdraw(user.id),
+    });
+  };
+
+  const confirmActivate = (user) => {
+    setConfirmAction({
+      title: 'تفعيل المشارك',
+      message: `هل تريد تفعيل المشارك "${user.full_name}"؟`,
+      details: `سيتم تغيير حالة المشارك من "${statusLabel[user.status]}" إلى "نشط".`,
+      onConfirm: () => activate(user.id),
+    });
+  };
+
+  const confirmSetRole = (user, newRole) => {
+    if (user.role === newRole) return;
+    setConfirmAction({
+      title: 'تغيير الصلاحية',
+      message: `هل تريد تغيير صلاحية "${user.full_name}"؟`,
+      details: `سيتم تغيير الصلاحية من "${roleLabel[user.role]}" إلى "${roleLabel[newRole]}".`,
+      onConfirm: () => setRole(user.id, newRole),
+    });
+  };
+
+  const confirmAssignHalqa = (user, halqaId) => {
+    const halqaName = halqaId ? halqas.find((h) => h.id === parseInt(halqaId))?.name : 'بدون حلقة';
+    const currentName = user.halqa_id ? halqas.find((h) => h.id === user.halqa_id)?.name || 'غير معروفة' : 'بدون حلقة';
+    setConfirmAction({
+      title: 'تعيين الحلقة',
+      message: `هل تريد تغيير حلقة "${user.full_name}"؟`,
+      details: `سيتم النقل من "${currentName}" إلى "${halqaName}".`,
+      onConfirm: () => assignHalqa(user.id, halqaId ? parseInt(halqaId) : null),
+    });
+  };
+
+  const requestBulkAction = (action) => {
+    const selected = users.filter((u) => selectedIds.has(u.id));
+    if (!selected.length) { toast.error('اختر مشاركين أولاً'); return; }
+
+    const rules = {
+      approve: {
+        title: 'قبول الطلبات',
+        check: (u) => u.status === 'pending',
+        explanation: 'يمكن قبول الطلبات ذات الحالة "قيد المراجعة" فقط. لقبول مشارك يجب أن تكون حالته "قيد المراجعة".',
+      },
+      reject: {
+        title: 'رفض الطلبات',
+        check: (u) => u.status === 'pending',
+        explanation: 'يمكن رفض الطلبات ذات الحالة "قيد المراجعة" فقط. لرفض مشارك يجب أن تكون حالته "قيد المراجعة".',
+      },
+      activate: {
+        title: 'تفعيل المشاركين',
+        check: (u) => ['rejected', 'withdrawn'].includes(u.status),
+        explanation: 'يمكن تفعيل المشاركين ذوي الحالة "مرفوض" أو "منسحب" فقط. المشاركون النشطون أو قيد المراجعة لا يمكن تفعيلهم.',
+      },
+      withdraw: {
+        title: 'سحب المشاركين',
+        check: (u) => u.status === 'active',
+        explanation: 'يمكن سحب المشاركين ذوي الحالة "نشط" فقط. لسحب مشارك يجب أن يكون نشطاً أولاً.',
+      },
+    };
+
+    const rule = rules[action];
+    const eligible = selected.filter(rule.check);
+    const ineligible = selected.filter((u) => !rule.check(u));
+
+    if (eligible.length === 0) {
+      setConfirmAction({
+        title: `لا يمكن تنفيذ: ${rule.title}`,
+        message: rule.explanation,
+        warnings: ineligible.map((u) => `${u.full_name} — ${statusLabel[u.status]}`),
+        canProceed: false,
+      });
+      return;
+    }
+
+    const warnings = ineligible.length > 0
+      ? [`${ineligible.length} مشارك لا ينطبق عليهم هذا الإجراء وسيتم تجاهلهم:`,
+        ...ineligible.map((u) => `• ${u.full_name} (${statusLabel[u.status]})`)]
+      : [];
+
+    setConfirmAction({
+      title: rule.title,
+      message: `سيتم تطبيق "${rule.title}" على ${eligible.length} مشارك`,
+      details: eligible.map((u) => u.full_name).join('، '),
+      warnings,
+      onConfirm: () => bulkAction(action),
+    });
+  };
+
+  const confirmBulkAssignHalqa = () => {
+    if (!bulkHalqaId) { toast.error('اختر حلقة أولاً'); return; }
+    const halqaName = halqas.find((h) => h.id === parseInt(bulkHalqaId))?.name;
+    const selected = users.filter((u) => selectedIds.has(u.id));
+    setConfirmAction({
+      title: 'تعيين حلقة للمحددين',
+      message: `سيتم تعيين ${selected.length} مشارك إلى حلقة "${halqaName}"`,
+      details: selected.map((u) => u.full_name).join('، '),
+      onConfirm: () => bulkAction('assign-halqa', { halqa_id: parseInt(bulkHalqaId) }),
+    });
+  };
+
   const downloadTemplate = async () => {
     const res = await api.get('/admin/import-template', { responseType: 'blob' });
     const url = URL.createObjectURL(res.data);
@@ -165,8 +343,6 @@ export default function AdminUsersPage() {
   const statusLabel = { active: 'نشط', pending: 'قيد المراجعة', rejected: 'مرفوض', withdrawn: 'منسحب' };
   const statusBadge = { active: 'badge-success', pending: 'badge-warning', rejected: 'badge-danger', withdrawn: 'badge-info' };
   const roleLabel = { participant: 'مشارك', supervisor: 'مشرف', super_admin: 'سوبر آدمن' };
-
-  const { paged, totalPages, total } = paginate(users, page);
 
   return (
     <div>
@@ -190,7 +366,35 @@ export default function AdminUsersPage() {
           <input type="file" accept=".xlsx" style={{ display: 'none' }}
             onChange={(e) => { handleFileSelect(e.target.files[0]); e.target.value = ''; }} />
         </label>
+        <button className="btn btn-primary btn-sm" onClick={() => exportUsers('xlsx')}>📊 تصدير XLSX</button>
+        <button className="btn btn-secondary btn-sm" onClick={() => exportUsers('csv')}>📄 تصدير CSV</button>
       </div>
+
+      {/* Bulk Action Bar */}
+      {selectedIds.size > 0 && (
+        <div className="card mb-2" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.5rem', padding: '0.75rem 1rem' }}>
+          <span style={{ fontWeight: 700, fontSize: '0.85rem', color: 'var(--primary)' }}>
+            تم تحديد {selectedIds.size} مستخدم
+          </span>
+          <div className="btn-group" style={{ flexWrap: 'wrap' }}>
+            <button className="btn btn-primary btn-sm" onClick={() => requestBulkAction('approve')}>قبول الكل</button>
+            <button className="btn btn-danger btn-sm" onClick={() => requestBulkAction('reject')}>رفض الكل</button>
+            <button className="btn btn-primary btn-sm" onClick={() => requestBulkAction('activate')}>تفعيل الكل</button>
+            <button className="btn btn-danger btn-sm" onClick={() => requestBulkAction('withdraw')}>سحب الكل</button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+              <select className="filter-input" style={{ minWidth: 120, padding: '0.3rem' }}
+                value={bulkHalqaId} onChange={(e) => setBulkHalqaId(e.target.value)}>
+                <option value="">اختر حلقة</option>
+                {halqas.map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}
+              </select>
+              <button className="btn btn-gold btn-sm" onClick={confirmBulkAssignHalqa}>
+                تعيين حلقة
+              </button>
+            </div>
+            <button className="btn btn-secondary btn-sm" onClick={() => setSelectedIds(new Set())}>إلغاء التحديد</button>
+          </div>
+        </div>
+      )}
 
       {loading ? (
         <div className="loading"><div className="spinner" /></div>
@@ -202,13 +406,19 @@ export default function AdminUsersPage() {
             <table>
               <thead>
                 <tr>
-                  <th>الاسم</th><th>البريد</th><th>الجنس</th><th>الدولة</th>
+                  <th style={{ width: 36 }}>
+                    <input type="checkbox" checked={paged.length > 0 && selectedIds.size === paged.length}
+                      onChange={toggleSelectAll} />
+                  </th>
+                  <th>رقم العضوية</th><th>الاسم</th><th>البريد</th><th>الجنس</th><th>الدولة</th>
                   <th>الحالة</th><th>الصلاحية</th><th>الحلقة</th><th>الإجراءات</th>
                 </tr>
               </thead>
               <tbody>
                 {paged.map((u) => (
-                  <tr key={u.id}>
+                  <tr key={u.id} style={{ background: selectedIds.has(u.id) ? 'var(--primary-light)' : undefined }}>
+                    <td><input type="checkbox" checked={selectedIds.has(u.id)} onChange={() => toggleSelect(u.id)} /></td>
+                    <td style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{u.member_id}</td>
                     <td style={{ fontWeight: 600 }}>{u.full_name}</td>
                     <td dir="ltr" style={{ fontSize: '0.75rem' }}>{u.email}</td>
                     <td>{u.gender === 'male' ? 'ذكر' : 'أنثى'}</td>
@@ -217,7 +427,7 @@ export default function AdminUsersPage() {
                     <td><span className="badge badge-info">{roleLabel[u.role]}</span></td>
                     <td>
                       <select className="filter-input" style={{ minWidth: 100, padding: '0.3rem' }}
-                        value={u.halqa_id || ''} onChange={(e) => assignHalqa(u.id, e.target.value ? parseInt(e.target.value) : null)}>
+                        value={u.halqa_id || ''} onChange={(e) => confirmAssignHalqa(u, e.target.value)}>
                         <option value="">بدون</option>
                         {halqas.map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}
                       </select>
@@ -226,19 +436,19 @@ export default function AdminUsersPage() {
                       <div className="btn-group">
                         {u.status === 'pending' && (
                           <>
-                            <button className="btn btn-primary btn-sm" onClick={() => approve(u.id)}>قبول</button>
+                            <button className="btn btn-primary btn-sm" onClick={() => confirmApprove(u)}>قبول</button>
                             <button className="btn btn-danger btn-sm" onClick={() => setShowRejectModal(u.id)}>رفض</button>
                           </>
                         )}
                         {(u.status === 'rejected' || u.status === 'withdrawn') && (
-                          <button className="btn btn-primary btn-sm" onClick={() => activate(u.id)}>تفعيل</button>
+                          <button className="btn btn-primary btn-sm" onClick={() => confirmActivate(u)}>تفعيل</button>
                         )}
                         {u.status === 'active' && (
-                          <button className="btn btn-danger btn-sm" onClick={() => withdraw(u.id)}>سحب</button>
+                          <button className="btn btn-danger btn-sm" onClick={() => confirmWithdraw(u)}>سحب</button>
                         )}
                         <button className="btn btn-secondary btn-sm" onClick={() => openEdit(u)}>✏️</button>
                         <select className="filter-input" style={{ minWidth: 80, padding: '0.3rem', fontSize: '0.7rem' }}
-                          value={u.role} onChange={(e) => setRole(u.id, e.target.value)}>
+                          value={u.role} onChange={(e) => confirmSetRole(u, e.target.value)}>
                           <option value="participant">مشارك</option>
                           <option value="supervisor">مشرف</option>
                           <option value="super_admin">سوبر آدمن</option>
@@ -406,6 +616,43 @@ export default function AdminUsersPage() {
             )}
             <div className="btn-group mt-2">
               <button className="btn btn-primary" onClick={() => setImportResult(null)}>حسناً</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Confirmation Modal */}
+      {confirmAction && (
+        <div className="modal-overlay" onClick={() => setConfirmAction(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 500 }}>
+            <div className="modal-title">{confirmAction.title}</div>
+            <p style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: '0.5rem' }}>
+              {confirmAction.message}
+            </p>
+            {confirmAction.details && (
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.75rem' }}>
+                {confirmAction.details}
+              </p>
+            )}
+            {confirmAction.warnings?.length > 0 && (
+              <div style={{
+                background: 'var(--gold-light)', borderRadius: 8, padding: '0.5rem 0.75rem',
+                marginBottom: '0.75rem', borderRight: '3px solid var(--gold)',
+                maxHeight: 150, overflowY: 'auto',
+              }}>
+                {confirmAction.warnings.map((w, i) => (
+                  <div key={i} style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', padding: '0.15rem 0' }}>{w}</div>
+                ))}
+              </div>
+            )}
+            <div className="btn-group">
+              {confirmAction.canProceed !== false && (
+                <button className="btn btn-primary" onClick={() => { confirmAction.onConfirm(); setConfirmAction(null); }}>
+                  تأكيد
+                </button>
+              )}
+              <button className="btn btn-secondary" onClick={() => setConfirmAction(null)}>
+                {confirmAction.canProceed === false ? 'حسناً' : 'إلغاء'}
+              </button>
             </div>
           </div>
         </div>

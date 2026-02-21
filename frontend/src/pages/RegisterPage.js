@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Moon } from 'lucide-react';
+import { Moon, Eye, EyeOff } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../utils/api';
 import toast from 'react-hot-toast';
@@ -7,6 +7,8 @@ import toast from 'react-hot-toast';
 export default function RegisterPage() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
   const [form, setForm] = useState({
     full_name: '', gender: 'male', age: '', phone: '',
     email: '', password: '', confirm_password: '', country: '', referral_source: '',
@@ -26,7 +28,8 @@ export default function RegisterPage() {
       toast.success(res.data.message);
       navigate('/login');
     } catch (err) {
-      toast.error(err.response?.data?.error || 'حدث خطأ');
+      const detail = err.response?.data?.detail;
+      toast.error(typeof detail === 'string' ? detail : 'حدث خطأ');
     } finally {
       setLoading(false);
     }
@@ -75,13 +78,35 @@ export default function RegisterPage() {
           <div className="form-row">
             <div className="form-group">
               <label className="form-label">كلمة المرور *</label>
-              <input type="password" className="form-input" value={form.password} dir="ltr"
-                onChange={(e) => set('password', e.target.value)} required minLength={6} placeholder="6 أحرف على الأقل" />
+              <div style={{ position: 'relative' }}>
+                <input type={showPassword ? 'text' : 'password'} className="form-input" value={form.password} dir="ltr"
+                  onChange={(e) => set('password', e.target.value)} required minLength={6} placeholder="6 أحرف على الأقل"
+                  style={{ paddingLeft: 40 }} />
+                <button type="button" onClick={() => setShowPassword((v) => !v)}
+                  style={{
+                    position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)',
+                    background: 'none', border: 'none', cursor: 'pointer',
+                    color: 'var(--text-muted)', padding: 0, display: 'flex', alignItems: 'center',
+                  }}>
+                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              </div>
             </div>
             <div className="form-group">
               <label className="form-label">تأكيد كلمة المرور *</label>
-              <input type="password" className="form-input" value={form.confirm_password} dir="ltr"
-                onChange={(e) => set('confirm_password', e.target.value)} required placeholder="أعد كتابة كلمة المرور" />
+              <div style={{ position: 'relative' }}>
+                <input type={showConfirm ? 'text' : 'password'} className="form-input" value={form.confirm_password} dir="ltr"
+                  onChange={(e) => set('confirm_password', e.target.value)} required placeholder="أعد كتابة كلمة المرور"
+                  style={{ paddingLeft: 40 }} />
+                <button type="button" onClick={() => setShowConfirm((v) => !v)}
+                  style={{
+                    position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)',
+                    background: 'none', border: 'none', cursor: 'pointer',
+                    color: 'var(--text-muted)', padding: 0, display: 'flex', alignItems: 'center',
+                  }}>
+                  {showConfirm ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              </div>
             </div>
           </div>
 

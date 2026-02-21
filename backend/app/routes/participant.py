@@ -1,5 +1,5 @@
 from datetime import date, timedelta
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.user import User
@@ -17,8 +17,13 @@ def save_card(
     db: Session = Depends(get_db),
 ):
     """Create a daily card. Each date can only be submitted once (no editing)."""
+    RAMADAN_START = date(2026, 2, 19)
+    RAMADAN_END = date(2026, 3, 19)
+
     if data.date > date.today():
         raise HTTPException(400, detail="لا يمكن إدخال بطاقة بتاريخ مستقبلي")
+    if data.date < RAMADAN_START or data.date > RAMADAN_END:
+        raise HTTPException(400, detail="لا يمكن إدخال بطاقة خارج فترة البرنامج الرمضاني (19 فبراير - 19 مارس)")
 
     existing = db.query(DailyCard).filter_by(user_id=user.id, date=data.date).first()
     if existing:
@@ -53,11 +58,18 @@ def get_card(
 
 @router.get("/cards")
 def get_all_cards(
+    date_from: str = Query(None),
+    date_to: str = Query(None),
     user: User = Depends(get_active_user),
     db: Session = Depends(get_db),
 ):
-    """Get all cards for current user."""
-    cards = db.query(DailyCard).filter_by(user_id=user.id).order_by(DailyCard.date.desc()).all()
+    """Get all cards for current user, with optional date filtering."""
+    query = db.query(DailyCard).filter_by(user_id=user.id)
+    if date_from:
+        query = query.filter(DailyCard.date >= date.fromisoformat(date_from))
+    if date_to:
+        query = query.filter(DailyCard.date <= date.fromisoformat(date_to))
+    cards = query.order_by(DailyCard.date.desc()).all()
     return {"cards": [card_to_response(c) for c in cards]}
 
 
@@ -73,30 +85,29 @@ def get_stats(
     today_card = db.query(DailyCard).filter_by(user_id=user.id, date=today).first()
     today_percentage = today_card.percentage if today_card else 0
 
-    # Weekly stats (current week)
-    week_start = today - timedelta(days=today.weekday())
-    week_cards = db.query(DailyCard).filter(
-        DailyCard.user_id == user.id,
-        DailyCard.date >= week_start,
-        DailyCard.date <= today,
-    ).all()
-
-    week_total = sum(c.total_score for c in week_cards)
-    week_max = sum(c.max_score for c in week_cards) if week_cards else 0
-    week_percentage = round((week_total / week_max) * 100, 1) if week_max > 0 else 0
-
     # Overall stats
     all_cards = db.query(DailyCard).filter_by(user_id=user.id).all()
     overall_total = sum(c.total_score for c in all_cards)
     overall_max = sum(c.max_score for c in all_cards) if all_cards else 0
     overall_percentage = round((overall_total / overall_max) * 100, 1) if overall_max > 0 else 0
 
+    # Supervisor info
+    supervisor_info = None
+    if user.halqa and user.halqa.supervisor:
+        sup = user.halqa.supervisor
+        supervisor_info = {
+            "full_name": sup.full_name,
+            "email": sup.email,
+            "phone": sup.phone,
+            "gender": sup.gender,
+        }
+
     return {
         "today_percentage": today_percentage,
-        "week_percentage": week_percentage,
         "overall_percentage": overall_percentage,
         "overall_total": overall_total,
         "cards_count": len(all_cards),
+        "supervisor": supervisor_info,
     }
 
 

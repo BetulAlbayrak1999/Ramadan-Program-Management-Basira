@@ -10,11 +10,15 @@ from app.models.user import User
 from app.models.daily_card import DailyCard
 from app.models.halqa import Halqa
 from app.dependencies import RoleChecker
+from typing import List
+from pydantic import BaseModel
 from app.schemas.user import (
     AdminUserUpdate, AdminResetPassword, SetRole,
     AssignHalqa, RejectRegistration, user_to_response,
 )
+from sqlalchemy import func
 from app.schemas.halqa import HalqaCreate, HalqaUpdate, AssignMembers, halqa_to_response
+from app.schemas.daily_card import card_to_response
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -368,6 +372,13 @@ def _build_analytics_results(
     if date_to:
         end_date = date.fromisoformat(date_to)
 
+    # Calculate max based on total days in range (not just submitted cards)
+    max_per_day = len(DailyCard.SCORE_FIELDS) * 10  # 110
+    total_days = None
+    if start_date:
+        range_end = end_date or today
+        total_days = (range_end - start_date).days + 1
+
     results = []
     for u in users:
         card_query = db.query(DailyCard).filter_by(user_id=u.id)
@@ -378,7 +389,10 @@ def _build_analytics_results(
 
         cards = card_query.all()
         total = sum(c.total_score for c in cards)
-        max_total = sum(c.max_score for c in cards) if cards else 0
+        if total_days:
+            max_total = total_days * max_per_day
+        else:
+            max_total = sum(c.max_score for c in cards) if cards else 0
         pct = round((total / max_total) * 100, 1) if max_total > 0 else 0
 
         if min_pct is not None and pct < min_pct:
@@ -388,6 +402,7 @@ def _build_analytics_results(
 
         results.append({
             "user_id": u.id,
+            "member_id": u.member_id,
             "full_name": u.full_name,
             "gender": u.gender,
             "halqa_name": u.halqa.name if u.halqa else "بدون حلقة",
@@ -447,6 +462,32 @@ def get_analytics(
     }
 
 
+@router.get("/user/{user_id}/cards")
+def get_user_cards(
+    user_id: int,
+    date_from: str = Query(None),
+    date_to: str = Query(None),
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Get all daily cards for a specific user, with optional date filtering."""
+    target = db.get(User, user_id)
+    if not target:
+        raise HTTPException(404, detail="المستخدم غير موجود")
+
+    card_query = db.query(DailyCard).filter_by(user_id=user_id)
+    if date_from:
+        card_query = card_query.filter(DailyCard.date >= date.fromisoformat(date_from))
+    if date_to:
+        card_query = card_query.filter(DailyCard.date <= date.fromisoformat(date_to))
+
+    cards = card_query.order_by(DailyCard.date.desc()).all()
+    return {
+        "member": user_to_response(target),
+        "cards": [card_to_response(c) for c in cards],
+    }
+
+
 # ─── Import / Export ──────────────────────────────────────────────────────────
 
 
@@ -482,6 +523,7 @@ def export_data(
     for r in results:
         rows.append({
             "الترتيب": r["rank"],
+            "رقم العضوية": r["member_id"],
             "الاسم": r["full_name"],
             "الجنس": gender_map.get(r["gender"], r["gender"]),
             "الحلقة": r["halqa_name"],
@@ -547,6 +589,9 @@ def import_users(
         if h not in headers:
             raise HTTPException(400, detail=f"العمود {h} مفقود من الملف")
 
+    max_mid = db.query(func.max(User.member_id)).scalar()
+    next_member_id = (max_mid + 1) if max_mid else 1000
+
     imported = 0
     errors = []
     seen_emails = set()
@@ -578,6 +623,7 @@ def import_users(
             age = int(raw_age) if raw_age is not None and str(raw_age).strip() else 0
 
             user = User(
+                member_id=next_member_id,
                 full_name=str(row_data.get("الاسم") or "").strip(),
                 gender=gender,
                 age=age,
@@ -591,6 +637,7 @@ def import_users(
             user.set_password("123456")  # Default password
             db.add(user)
             db.flush()
+            next_member_id += 1
             imported += 1
         except Exception as e:
             db.rollback()
@@ -629,3 +676,184 @@ def get_import_template(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": "attachment; filename=import_template.xlsx"},
     )
+
+
+# ─── Bulk Actions ────────────────────────────────────────────────────────────
+
+
+class BulkUserIds(BaseModel):
+    user_ids: List[int]
+
+
+class BulkAssignHalqa(BaseModel):
+    user_ids: List[int]
+    halqa_id: int | None = None
+
+
+@router.post("/bulk/approve")
+def bulk_approve(
+    data: BulkUserIds,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    count = 0
+    for uid in data.user_ids:
+        u = db.get(User, uid)
+        if u and u.status == "pending":
+            u.status = "active"
+            u.rejection_note = None
+            count += 1
+    db.commit()
+    return {"message": f"تم قبول {count} طلب"}
+
+
+@router.post("/bulk/reject")
+def bulk_reject(
+    data: BulkUserIds,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    count = 0
+    for uid in data.user_ids:
+        u = db.get(User, uid)
+        if u and u.status == "pending":
+            u.status = "rejected"
+            count += 1
+    db.commit()
+    return {"message": f"تم رفض {count} طلب"}
+
+
+@router.post("/bulk/activate")
+def bulk_activate(
+    data: BulkUserIds,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    count = 0
+    for uid in data.user_ids:
+        u = db.get(User, uid)
+        if u and u.status in ("rejected", "withdrawn"):
+            u.status = "active"
+            count += 1
+    db.commit()
+    return {"message": f"تم تفعيل {count} مشارك"}
+
+
+@router.post("/bulk/withdraw")
+def bulk_withdraw(
+    data: BulkUserIds,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    count = 0
+    for uid in data.user_ids:
+        u = db.get(User, uid)
+        if u and u.status == "active":
+            u.status = "withdrawn"
+            count += 1
+    db.commit()
+    return {"message": f"تم سحب {count} مشارك"}
+
+
+@router.post("/bulk/assign-halqa")
+def bulk_assign_halqa(
+    data: BulkAssignHalqa,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    count = 0
+    for uid in data.user_ids:
+        u = db.get(User, uid)
+        if u:
+            u.halqa_id = data.halqa_id
+            count += 1
+    db.commit()
+    return {"message": f"تم تعيين الحلقة لـ {count} مشارك"}
+
+
+# ─── Users Export ─────────────────────────────────────────────────────────────
+
+
+@router.get("/export-users")
+def export_users(
+    format: str = Query("xlsx"),
+    status: str = Query(None),
+    gender: str = Query(None),
+    halqa_id: int = Query(None),
+    search: str = Query(""),
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Export users list with all personal info."""
+    import csv
+    from openpyxl import Workbook
+
+    query = db.query(User)
+    if status:
+        query = query.filter_by(status=status)
+    if gender:
+        male_values = {"male", "ذكر"}
+        female_values = {"female", "أنثى"}
+        match_set = male_values if gender == "male" else female_values
+        query = query.filter(User.gender.in_(match_set))
+    if halqa_id:
+        query = query.filter_by(halqa_id=int(halqa_id))
+    if search:
+        query = query.filter(
+            or_(User.full_name.ilike(f"%{search}%"), User.email.ilike(f"%{search}%"))
+        )
+
+    users_list = query.order_by(User.created_at.desc()).all()
+
+    gender_map = {"male": "ذكر", "female": "أنثى"}
+    status_map = {"active": "نشط", "pending": "قيد المراجعة", "rejected": "مرفوض", "withdrawn": "منسحب"}
+    role_map = {"participant": "مشارك", "supervisor": "مشرف", "super_admin": "سوبر آدمن"}
+
+    rows = []
+    for u in users_list:
+        rows.append({
+            "رقم العضوية": u.member_id,
+            "الاسم": u.full_name,
+            "الجنس": gender_map.get(u.gender, u.gender),
+            "العمر": u.age,
+            "الهاتف": u.phone,
+            "البريد": u.email,
+            "الدولة": u.country,
+            "الحالة": status_map.get(u.status, u.status),
+            "الصلاحية": role_map.get(u.role, u.role),
+            "الحلقة": u.halqa.name if u.halqa else "-",
+            "المشرف": u.halqa.supervisor.full_name if u.halqa and u.halqa.supervisor else "-",
+            "مصدر التسجيل": u.referral_source or "",
+            "تاريخ التسجيل": u.created_at.strftime("%Y-%m-%d") if u.created_at else "",
+        })
+
+    if format == "xlsx":
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "المستخدمون"
+        ws.sheet_view.rightToLeft = True
+        if rows:
+            headers = list(rows[0].keys())
+            ws.append(headers)
+            for row in rows:
+                ws.append([row[h] for h in headers])
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": "attachment; filename=users_report.xlsx"},
+        )
+    else:
+        output = io.StringIO()
+        if rows:
+            writer = csv.DictWriter(output, fieldnames=rows[0].keys())
+            writer.writeheader()
+            writer.writerows(rows)
+        csv_bytes = "\ufeff" + output.getvalue()
+        return Response(
+            content=csv_bytes.encode("utf-8"),
+            media_type="text/csv; charset=utf-8-sig",
+            headers={"Content-Disposition": "attachment; filename=users_report.csv"},
+        )

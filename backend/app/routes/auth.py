@@ -11,6 +11,7 @@ from app.schemas.user import (
     UserRegister, UserLogin, UserProfileUpdate,
     ChangePassword, ForgotPassword, ResetPassword, user_to_response,
 )
+from sqlalchemy import func
 from app.utils.email import send_new_registration_email, send_password_reset_email
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -29,7 +30,11 @@ def register(data: UserRegister, db: Session = Depends(get_db)):
     if existing:
         raise HTTPException(400, detail="البريد الإلكتروني مسجل مسبقاً")
 
+    max_mid = db.query(func.max(User.member_id)).scalar()
+    next_member_id = (max_mid + 1) if max_mid else 1000
+
     user = User(
+        member_id=next_member_id,
         full_name=data.full_name.strip(),
         gender=data.gender,
         age=data.age,
@@ -135,15 +140,17 @@ def forgot_password(data: ForgotPassword, db: Session = Depends(get_db)):
     email = data.email.lower().strip()
     user = db.query(User).filter_by(email=email).first()
 
-    if user:
-        token = "".join(random.choices(string.digits, k=6))
-        reset_tokens[email] = token
-        try:
-            send_password_reset_email(email, token)
-        except Exception:
-            pass
+    if not user:
+        raise HTTPException(404, detail="هذا البريد الإلكتروني غير مسجل في النظام")
 
-    return {"message": "إذا كان البريد مسجلاً، سيتم إرسال رمز إعادة التعيين"}
+    token = "".join(random.choices(string.digits, k=6))
+    reset_tokens[email] = token
+    try:
+        send_password_reset_email(email, token)
+    except Exception:
+        pass
+
+    return {"message": "تم إرسال رمز إعادة التعيين إلى بريدك الإلكتروني"}
 
 
 @router.post("/reset-password")

@@ -19,8 +19,19 @@ export default function AdminHalqasPage() {
   const [assignSearch, setAssignSearch] = useState('');
   const [assignGender, setAssignGender] = useState('');
   const [assignSort, setAssignSort] = useState('asc');
+  const [assignHalqaFilter, setAssignHalqaFilter] = useState('');
   const [assignPage, setAssignPage] = useState(1);
   const [confirmAssign, setConfirmAssign] = useState(null);
+
+  // Supervisor picker filters (shared for create & edit modals)
+  const [supSearch, setSupSearch] = useState('');
+  const [supGender, setSupGender] = useState('');
+
+  // Main page filters
+  const [halqaSearch, setHalqaSearch] = useState('');
+  const [memberFilter, setMemberFilter] = useState('all');
+  const [memberHalqaFilter, setMemberHalqaFilter] = useState('');
+  const [memberPage, setMemberPage] = useState(1);
 
   const fetchData = async () => {
     setLoading(true);
@@ -64,6 +75,7 @@ export default function AdminHalqasPage() {
     setSelectedMembers(currentMembers);
     setAssignSearch('');
     setAssignGender('');
+    setAssignHalqaFilter('');
     setAssignSort('asc');
     setAssignPage(1);
     setAssignModal(halqa);
@@ -112,17 +124,29 @@ export default function AdminHalqasPage() {
 
   const supervisors = users.filter((u) => u.role === 'supervisor' || u.role === 'super_admin');
 
-  // Filter, sort, and paginate users for assign modal
   const genderMatches = (userGender, filterGender) => {
     if (filterGender === 'male') return ['male', 'ذكر'].includes(userGender);
     if (filterGender === 'female') return ['female', 'أنثى'].includes(userGender);
     return true;
   };
 
+  // Filtered supervisors for create/edit modals
+  const filteredSupervisors = supervisors.filter((s) => {
+    if (supSearch && !s.full_name.includes(supSearch)) return false;
+    if (supGender && !genderMatches(s.gender, supGender)) return false;
+    return true;
+  });
+  const genderLabel = (g) => ['male', 'ذكر'].includes(g) ? 'ذكر' : 'أنثى';
+
+  // Filter, sort, and paginate users for assign modal
+
   const filteredAssignUsers = users
     .filter((u) => {
       if (assignSearch && !u.full_name.includes(assignSearch)) return false;
       if (assignGender && !genderMatches(u.gender, assignGender)) return false;
+      if (assignHalqaFilter === 'this' && u.halqa_id !== assignModal?.id) return false;
+      if (assignHalqaFilter === 'assigned' && !u.halqa_id) return false;
+      if (assignHalqaFilter === 'unassigned' && u.halqa_id) return false;
       return true;
     })
     .sort((a, b) => {
@@ -132,6 +156,21 @@ export default function AdminHalqasPage() {
 
   const assignPaginated = paginate(filteredAssignUsers, assignPage);
 
+  // Main page: halqa grid filtering
+  const filteredHalqas = halqas.filter((h) => !halqaSearch || h.name.includes(halqaSearch));
+  const unassignedCount = users.filter((u) => !u.halqa_id).length;
+
+  // Main page: participants list filtering
+  const filteredMembers = users
+    .filter((u) => {
+      if (memberFilter === 'assigned' && !u.halqa_id) return false;
+      if (memberFilter === 'unassigned' && u.halqa_id) return false;
+      if (memberHalqaFilter && String(u.halqa_id) !== memberHalqaFilter) return false;
+      return true;
+    })
+    .sort((a, b) => (a.full_name || '').localeCompare(b.full_name || '', 'ar'));
+  const membersPaginated = paginate(filteredMembers, memberPage);
+
   if (loading) return <div className="loading"><div className="spinner" /></div>;
 
   return (
@@ -139,32 +178,144 @@ export default function AdminHalqasPage() {
       <h1 className="page-title"><CircleDot size={22} /> إدارة الحلقات</h1>
       <p className="page-subtitle">إنشاء وإدارة الحلقات وتعيين المشاركين والمشرفين</p>
 
-      <button className="btn btn-primary mb-2" onClick={() => setShowCreate(true)}>+ إنشاء حلقة جديدة</button>
+      {/* Summary Stats */}
+      <div className="stats-grid">
+        <div className="stat-card">
+          <div className="stat-icon"><CircleDot size={20} /></div>
+          <div className="stat-value">{halqas.length}</div>
+          <div className="stat-label">عدد الحلقات</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-icon"><Users size={20} /></div>
+          <div className="stat-value">{users.length}</div>
+          <div className="stat-label">إجمالي المشاركين</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-icon"><UserPlus size={20} /></div>
+          <div className="stat-value">{users.length - unassignedCount}</div>
+          <div className="stat-label">معيّنون في حلقات</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-icon"><UserMinus size={20} /></div>
+          <div className="stat-value gold">{unassignedCount}</div>
+          <div className="stat-label">غير معيّنين</div>
+        </div>
+      </div>
 
-      {halqas.length === 0 ? (
+      {/* Search & Create */}
+      <div className="filters-bar mb-2">
+        <div style={{ position: 'relative', flex: '1 1 200px' }}>
+          <Search size={14} style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+          <input className="filter-input" placeholder="بحث باسم الحلقة..."
+            value={halqaSearch} onChange={(e) => setHalqaSearch(e.target.value)}
+            style={{ paddingRight: 32, width: '100%' }} />
+        </div>
+        <button className="btn btn-primary btn-sm" onClick={() => { setSupSearch(''); setSupGender(''); setShowCreate(true); }}>+ إنشاء حلقة جديدة</button>
+      </div>
+
+      {/* Halqa Grid */}
+      {filteredHalqas.length === 0 ? (
         <div className="empty-state">
           <div className="empty-state-icon"><CircleDot size={48} /></div>
-          <div className="empty-state-text">لا توجد حلقات بعد</div>
+          <div className="empty-state-text">{halqaSearch ? 'لا توجد حلقات تطابق البحث' : 'لا توجد حلقات بعد'}</div>
         </div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1rem' }}>
-          {halqas.map((h) => (
+          {filteredHalqas.map((h) => (
             <div className="card" key={h.id}>
               <div className="card-header">
                 <div className="card-title"><Pin size={16} /> {h.name}</div>
                 <div className="btn-group">
-                  <button className="btn btn-secondary btn-sm" onClick={() => setEditHalqa({ ...h })}><Pencil size={14} /></button>
+                  <button className="btn btn-secondary btn-sm" onClick={() => { setSupSearch(''); setSupGender(''); setEditHalqa({ ...h, original_supervisor_id: h.supervisor_id }); }}><Pencil size={14} /></button>
                   <button className="btn btn-gold btn-sm" onClick={() => openAssign(h)}><Users size={14} /> تعيين</button>
                 </div>
               </div>
-              <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                <p>المشرف: <strong>{h.supervisor_name || 'غير محدد'}</strong></p>
-                <p>عدد الأعضاء: <strong>{h.member_count}</strong></p>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
+                المشرف: <strong>{h.supervisor_name || 'غير محدد'}</strong>
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <div style={{ flex: 1, textAlign: 'center', padding: '0.4rem', background: 'var(--primary-light)', borderRadius: 8 }}>
+                  <div style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--primary)' }}>{h.member_count}</div>
+                  <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>إجمالي</div>
+                </div>
+                <div style={{ flex: 1, textAlign: 'center', padding: '0.4rem', background: '#eff6ff', borderRadius: 8 }}>
+                  <div style={{ fontSize: '1.1rem', fontWeight: 800, color: '#2563eb' }}>{h.male_count || 0}</div>
+                  <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>ذكور</div>
+                </div>
+                <div style={{ flex: 1, textAlign: 'center', padding: '0.4rem', background: '#fdf2f8', borderRadius: 8 }}>
+                  <div style={{ fontSize: '1.1rem', fontWeight: 800, color: '#db2777' }}>{h.female_count || 0}</div>
+                  <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>إناث</div>
+                </div>
               </div>
             </div>
           ))}
         </div>
       )}
+
+      {/* Participants Section */}
+      <div className="card" style={{ marginTop: '1.5rem' }}>
+        <div className="card-title mb-2" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <Users size={18} /> المشاركون
+        </div>
+
+        <div className="filters-bar mb-2">
+          <select className="filter-input" value={memberFilter}
+            onChange={(e) => { setMemberFilter(e.target.value); setMemberPage(1); }}>
+            <option value="all">الكل ({users.length})</option>
+            <option value="assigned">معيّنون في حلقات ({users.length - unassignedCount})</option>
+            <option value="unassigned">غير معيّنين ({unassignedCount})</option>
+          </select>
+          <select className="filter-input" value={memberHalqaFilter}
+            onChange={(e) => { setMemberHalqaFilter(e.target.value); setMemberPage(1); }}>
+            <option value="">كل الحلقات</option>
+            {halqas.map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}
+          </select>
+        </div>
+
+        {filteredMembers.length === 0 ? (
+          <div className="empty-state" style={{ padding: '2rem 0' }}>
+            <div className="empty-state-icon"><Users size={36} /></div>
+            <div className="empty-state-text">لا يوجد مشاركون</div>
+          </div>
+        ) : (
+          <>
+            <div className="table-container">
+              <table>
+                <thead>
+                  <tr>
+                    <th>رقم العضوية</th><th>الاسم</th><th>الجنس</th><th>الحلقة</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {membersPaginated.paged.map((u) => (
+                    <tr key={u.id}>
+                      <td style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{u.member_id}</td>
+                      <td style={{ fontWeight: 600 }}>
+                        {u.full_name}
+                        {u.supervised_halqa_name && (
+                          <span className="badge badge-info" style={{ marginRight: '0.4rem', fontSize: '0.65rem' }}>
+                            مشرف: {u.supervised_halqa_name}
+                          </span>
+                        )}
+                      </td>
+                      <td>{['male', 'ذكر'].includes(u.gender) ? 'ذكر' : 'أنثى'}</td>
+                      <td>
+                        {u.halqa_name ? (
+                          <span className="badge badge-success">{u.halqa_name}</span>
+                        ) : (
+                          <span className="badge badge-warning">غير معيّن</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <Pagination page={memberPage} totalPages={membersPaginated.totalPages}
+              total={filteredMembers.length} onPageChange={setMemberPage} />
+          </>
+        )}
+      </div>
 
       {/* Create Modal */}
       {showCreate && (
@@ -177,10 +328,49 @@ export default function AdminHalqasPage() {
             </div>
             <div className="form-group">
               <label className="form-label">المشرف</label>
-              <select className="form-select" value={newSupervisor} onChange={(e) => setNewSupervisor(e.target.value)}>
-                <option value="">بدون مشرف</option>
-                {supervisors.map((s) => <option key={s.id} value={s.id}>{s.full_name}</option>)}
-              </select>
+              <div className="filters-bar mb-1" style={{ gap: '0.4rem' }}>
+                <div style={{ position: 'relative', flex: '1 1 140px' }}>
+                  <Search size={13} style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                  <input className="filter-input" placeholder="بحث باسم المشرف..."
+                    value={supSearch} onChange={(e) => setSupSearch(e.target.value)}
+                    style={{ paddingRight: 28, width: '100%', fontSize: '0.78rem' }} />
+                </div>
+                <select className="filter-input" value={supGender}
+                  onChange={(e) => setSupGender(e.target.value)} style={{ fontSize: '0.78rem', minWidth: 80 }}>
+                  <option value="">كل الجنسين</option>
+                  <option value="male">ذكر</option>
+                  <option value="female">أنثى</option>
+                </select>
+              </div>
+              <div style={{ border: '1px solid var(--border)', borderRadius: 8, maxHeight: 180, overflowY: 'auto' }}>
+                <div
+                  onClick={() => setNewSupervisor('')}
+                  style={{
+                    padding: '0.5rem 0.75rem', cursor: 'pointer', fontSize: '0.82rem',
+                    background: !newSupervisor ? 'var(--primary)' : 'transparent',
+                    color: !newSupervisor ? '#fff' : 'var(--text-primary)',
+                    borderBottom: '1px solid var(--border)',
+                  }}>
+                  بدون مشرف
+                </div>
+                {filteredSupervisors.map((s) => (
+                  <div key={s.id}
+                    onClick={() => setNewSupervisor(String(s.id))}
+                    style={{
+                      padding: '0.5rem 0.75rem', cursor: 'pointer', fontSize: '0.82rem',
+                      background: String(s.id) === newSupervisor ? 'var(--primary)' : 'transparent',
+                      color: String(s.id) === newSupervisor ? '#fff' : 'var(--text-primary)',
+                      borderBottom: '1px solid var(--border)',
+                    }}>
+                    {s.full_name} — {genderLabel(s.gender)}
+                  </div>
+                ))}
+                {filteredSupervisors.length === 0 && (
+                  <div style={{ padding: '0.75rem', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                    لا توجد نتائج
+                  </div>
+                )}
+              </div>
             </div>
             <div className="btn-group">
               <button className="btn btn-primary" onClick={createHalqa}>إنشاء</button>
@@ -195,6 +385,16 @@ export default function AdminHalqasPage() {
         <div className="modal-overlay" onClick={() => setEditHalqa(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-title">تعديل الحلقة</div>
+            {/* Current supervisor info */}
+            <div style={{
+              background: 'var(--primary-light)', borderRadius: 8, padding: '0.5rem 0.75rem',
+              marginBottom: '0.75rem', fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '0.4rem',
+            }}>
+              <span style={{ color: 'var(--text-muted)' }}>المشرف الحالي:</span>
+              <strong style={{ color: 'var(--primary)' }}>
+                {editHalqa.supervisor_name || 'بدون مشرف'}
+              </strong>
+            </div>
             <div className="form-group">
               <label className="form-label">اسم الحلقة</label>
               <input className="form-input" value={editHalqa.name}
@@ -202,11 +402,58 @@ export default function AdminHalqasPage() {
             </div>
             <div className="form-group">
               <label className="form-label">المشرف</label>
-              <select className="form-select" value={editHalqa.supervisor_id || ''}
-                onChange={(e) => setEditHalqa((h) => ({ ...h, supervisor_id: e.target.value ? parseInt(e.target.value) : null }))}>
-                <option value="">بدون مشرف</option>
-                {supervisors.map((s) => <option key={s.id} value={s.id}>{s.full_name}</option>)}
-              </select>
+              <div className="filters-bar mb-1" style={{ gap: '0.4rem' }}>
+                <div style={{ position: 'relative', flex: '1 1 140px' }}>
+                  <Search size={13} style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                  <input className="filter-input" placeholder="بحث باسم المشرف..."
+                    value={supSearch} onChange={(e) => setSupSearch(e.target.value)}
+                    style={{ paddingRight: 28, width: '100%', fontSize: '0.78rem' }} />
+                </div>
+                <select className="filter-input" value={supGender}
+                  onChange={(e) => setSupGender(e.target.value)} style={{ fontSize: '0.78rem', minWidth: 80 }}>
+                  <option value="">كل الجنسين</option>
+                  <option value="male">ذكر</option>
+                  <option value="female">أنثى</option>
+                </select>
+              </div>
+              <div style={{ border: '1px solid var(--border)', borderRadius: 8, maxHeight: 180, overflowY: 'auto' }}>
+                <div
+                  onClick={() => setEditHalqa((h) => ({ ...h, supervisor_id: null }))}
+                  style={{
+                    padding: '0.5rem 0.75rem', cursor: 'pointer', fontSize: '0.82rem',
+                    background: !editHalqa.supervisor_id ? 'var(--primary)' : 'transparent',
+                    color: !editHalqa.supervisor_id ? '#fff' : 'var(--text-primary)',
+                    borderBottom: '1px solid var(--border)',
+                  }}>
+                  بدون مشرف
+                </div>
+                {filteredSupervisors.map((s) => {
+                  const isSelected = s.id === editHalqa.supervisor_id;
+                  const isOriginal = s.id === editHalqa.original_supervisor_id;
+                  return (
+                    <div key={s.id}
+                      onClick={() => setEditHalqa((h) => ({ ...h, supervisor_id: s.id }))}
+                      style={{
+                        padding: '0.5rem 0.75rem', cursor: 'pointer', fontSize: '0.82rem',
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                        background: isSelected ? 'var(--primary)' : isOriginal ? '#e0f2fe' : 'transparent',
+                        color: isSelected ? '#fff' : 'var(--text-primary)',
+                        borderBottom: '1px solid var(--border)',
+                        borderRight: isOriginal && !isSelected ? '3px solid var(--gold)' : 'none',
+                      }}>
+                      <span>{s.full_name} — {genderLabel(s.gender)}</span>
+                      {isOriginal && !isSelected && (
+                        <span style={{ fontSize: '0.68rem', color: 'var(--gold)', fontWeight: 700 }}>الحالي</span>
+                      )}
+                    </div>
+                  );
+                })}
+                {filteredSupervisors.length === 0 && (
+                  <div style={{ padding: '0.75rem', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                    لا توجد نتائج
+                  </div>
+                )}
+              </div>
             </div>
             <div className="btn-group">
               <button className="btn btn-primary" onClick={updateHalqa}>حفظ</button>
@@ -247,6 +494,13 @@ export default function AdminHalqasPage() {
                 <option value="male">ذكر</option>
                 <option value="female">أنثى</option>
               </select>
+              <select className="filter-input" value={assignHalqaFilter}
+                onChange={(e) => { setAssignHalqaFilter(e.target.value); setAssignPage(1); }}>
+                <option value="">الكل</option>
+                <option value="this">أعضاء هذه الحلقة</option>
+                <option value="assigned">معيّنون في حلقات</option>
+                <option value="unassigned">غير معيّنين</option>
+              </select>
               <select className="filter-input" value={assignSort}
                 onChange={(e) => { setAssignSort(e.target.value); setAssignPage(1); }}>
                 <option value="asc">الاسم تصاعدي</option>
@@ -278,7 +532,14 @@ export default function AdminHalqasPage() {
                           onChange={() => toggleMember(u.id)}
                           onClick={(e) => e.stopPropagation()} />
                       </td>
-                      <td style={{ fontWeight: 600 }}>{u.full_name}</td>
+                      <td style={{ fontWeight: 600 }}>
+                        {u.full_name}
+                        {u.supervised_halqa_name && (
+                          <span className="badge badge-info" style={{ marginRight: '0.4rem', fontSize: '0.65rem' }}>
+                            مشرف: {u.supervised_halqa_name}
+                          </span>
+                        )}
+                      </td>
                       <td>{['male', 'ذكر'].includes(u.gender) ? 'ذكر' : 'أنثى'}</td>
                       <td>
                         {u.halqa_id === assignModal.id ? (
